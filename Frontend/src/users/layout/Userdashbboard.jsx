@@ -1,5 +1,9 @@
-import { NavLink, Outlet, useLocation, Link } from "react-router-dom";
-import { useState } from "react";
+// src/components/UserDashboard.jsx
+import { NavLink, Outlet, useLocation, Link, useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import axios from "axios";
+import { toast, ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 import {
   LayoutDashboard,
   FileText,
@@ -19,17 +23,74 @@ import {
   GraduationCap,
 } from "lucide-react";
 
+// ============================================================
+// API CONFIGURATION — JSON SERVER
+// ============================================================
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: { "Content-Type": "application/json" },
+});
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function getCurrentStudent() {
+  try {
+    const raw =
+      localStorage.getItem("user") || sessionStorage.getItem("user");
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function getStudentKeys(student) {
+  if (!student) return [];
+  return [student.studentId, student.id, student.admissionNumber]
+    .filter(Boolean)
+    .map(String);
+}
+
+const getInitials = (name) => {
+  if (!name) return "ST";
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+};
+
+// ============================================================
+// MAIN COMPONENT
+// ============================================================
+
 function UserDashboard() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [user, setUser] = useState(null);
+  const [profilePhoto, setProfilePhoto] = useState(null);
+  const [loggingOut, setLoggingOut] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const menuItems = [
     { name: "Dashboard", path: "/user/dashboard", icon: LayoutDashboard },
     { name: "Application Form", path: "/user/application-form", icon: FileText },
     { name: "Application", path: "/user/application", icon: ClipboardList },
     { name: "Register Units", path: "/user/register-units", icon: BookOpen },
-    { name: "My Registered Units", path: "/user/my-registered-units", icon: Library },
+    {
+      name: "My Registered Units",
+      path: "/user/my-registered-units",
+      icon: Library,
+    },
     { name: "View Marks", path: "/user/view-marks", icon: BarChart3 },
     { name: "Profile", path: "/user/profile", icon: User },
     { name: "Settings", path: "/user/settings", icon: Settings },
@@ -42,8 +103,143 @@ function UserDashboard() {
 
   const sidebarWidth = collapsed ? "lg:w-20" : "lg:w-64";
 
+  // ============================================================
+  // LOAD USER + PROFILE PHOTO
+  // ============================================================
+
+  const loadUser = useCallback(async () => {
+    const cached = getCurrentStudent();
+    if (!cached) {
+      // Not logged in → send to login
+      navigate("/student-portal", { replace: true });
+      return;
+    }
+
+    setUser(cached);
+    setProfilePhoto(cached.profilePhoto || null);
+
+    // Refresh from db.json to pick up the latest photo / name
+    try {
+      const keys = getStudentKeys(cached);
+      const [accountsRes, profilesRes] = await Promise.all([
+        api.get("/accounts"),
+        api.get("/profiles"),
+      ]);
+
+      const accounts = Array.isArray(accountsRes.data)
+        ? accountsRes.data
+        : [];
+      const profiles = Array.isArray(profilesRes.data)
+        ? profilesRes.data
+        : [];
+
+      const acc = accounts.find(
+        (a) =>
+          keys.includes(String(a.studentId)) ||
+          String(a.id) === String(cached.id)
+      );
+      const prof = profiles.find(
+        (p) =>
+          keys.includes(String(p.studentId)) ||
+          String(p.accountId) === String(cached.id)
+      );
+
+      const merged = {
+        ...cached,
+        ...(acc || {}),
+        fullName:
+          prof?.fullName || acc?.fullName || cached.fullName || "Student",
+        profilePhoto:
+          prof?.profilePhoto || acc?.profilePhoto || cached.profilePhoto || null,
+        studentId: acc?.studentId || cached.studentId || cached.id,
+      };
+
+      setUser(merged);
+      setProfilePhoto(merged.profilePhoto || null);
+
+      // Sync back to storage so other pages see the fresh photo
+      const storage = localStorage.getItem("user")
+        ? localStorage
+        : sessionStorage;
+      storage.setItem("user", JSON.stringify(merged));
+    } catch (err) {
+      // Silent — we still have the cached user
+      console.warn("Could not refresh user data:", err);
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    loadUser();
+  }, [loadUser]);
+
+  // Listen for custom event + storage changes (photo updated in Profile page)
+  useEffect(() => {
+    const handleUpdate = () => loadUser();
+    const handleStorage = (e) => {
+      if (!e.key || e.key === "user") loadUser();
+    };
+
+    window.addEventListener("user-updated", handleUpdate);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("user-updated", handleUpdate);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [loadUser]);
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
+  const handleLogout = () => {
+    setLoggingOut(true);
+
+    // Clear all auth artifacts
+    try {
+      localStorage.removeItem("user");
+      localStorage.removeItem("isAuthenticated");
+      localStorage.removeItem("token");
+      sessionStorage.removeItem("user");
+      sessionStorage.removeItem("isAuthenticated");
+      sessionStorage.removeItem("token");
+    } catch {
+      /* ignore */
+    }
+
+    toast.success("You have been logged out.");
+
+    // Short delay so the toast is visible
+    setTimeout(() => {
+      navigate("/student-portal", { replace: true });
+      setLoggingOut(false);
+    }, 500);
+  };
+
+  // ============================================================
+  // DISPLAY VALUES
+  // ============================================================
+
+  const displayName = user?.fullName || "Student";
+  const displayId = user?.studentId || user?.id || "—";
+  const initials = getInitials(displayName);
+
+  // ============================================================
+  // RENDER
+  // ============================================================
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop
+        closeOnClick
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light"
+      />
 
       {/* ===================== MOBILE OVERLAY ===================== */}
       {mobileOpen && (
@@ -63,7 +259,6 @@ function UserDashboard() {
             "linear-gradient(180deg, #451a03 0%, #78350f 50%, #451a03 100%)",
         }}
       >
-
         {/* ---------- Logo + Collapse / Close ---------- */}
         <div
           className={`h-16 flex items-center border-b border-amber-50/10 ${
@@ -103,7 +298,7 @@ function UserDashboard() {
           </button>
         </div>
 
-        {/* ---------- Profile Card ---------- */}
+        {/* ---------- Profile Card (real photo + name) ---------- */}
         <div
           className={`border-b border-amber-50/10 ${
             collapsed ? "lg:px-2 lg:py-4 px-4 py-4" : "px-4 py-4"
@@ -115,12 +310,33 @@ function UserDashboard() {
             }`}
           >
             <div className="relative shrink-0">
-              <img
-                src="https://randomuser.me/api/portraits/men/75.jpg"
-                alt="Khalid Abdikarim"
-                className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-400/50"
-                loading="lazy"
-              />
+              {profilePhoto ? (
+                <img
+                  src={profilePhoto}
+                  alt={displayName}
+                  className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-400/50"
+                  onError={(e) => {
+                    // If image fails, replace with initials fallback
+                    e.currentTarget.style.display = "none";
+                    const parent = e.currentTarget.parentElement;
+                    const fallback = parent.querySelector(".avatar-fallback");
+                    if (fallback) fallback.style.display = "flex";
+                  }}
+                />
+              ) : null}
+
+              {/* Fallback initials — hidden by default if photo loads */}
+              <div
+                className="avatar-fallback w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ring-2 ring-amber-400/50"
+                style={{
+                  backgroundColor: "rgba(217, 119, 6, 0.25)",
+                  color: "#FCD34D",
+                  display: profilePhoto ? "none" : "flex",
+                }}
+              >
+                {initials}
+              </div>
+
               <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full ring-2 ring-amber-900" />
             </div>
 
@@ -130,10 +346,10 @@ function UserDashboard() {
               }`}
             >
               <p className="text-sm font-semibold text-white truncate">
-                Khalid Abdikarim
+                {displayName}
               </p>
               <p className="text-[11px] text-amber-200/80 truncate">
-                ID · 2024-0521
+                ID · {displayId}
               </p>
             </div>
           </div>
@@ -160,7 +376,9 @@ function UserDashboard() {
                   title={collapsed ? item.name : undefined}
                   className={({ isActive }) =>
                     `group relative flex items-center gap-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                      collapsed ? "lg:justify-center lg:px-2 py-2.5 px-3" : "px-3 py-2.5"
+                      collapsed
+                        ? "lg:justify-center lg:px-2 py-2.5 px-3"
+                        : "px-3 py-2.5"
                     } ${
                       isActive
                         ? "bg-black text-white shadow-lg shadow-black/40"
@@ -208,13 +426,17 @@ function UserDashboard() {
         {/* ---------- Logout ---------- */}
         <div className="border-t border-amber-50/10 p-3">
           <button
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-amber-100/80 hover:bg-black hover:text-white transition-colors duration-200 ${
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-amber-100/80 hover:bg-red-600 hover:text-white transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${
               collapsed ? "lg:justify-center" : ""
             }`}
             title={collapsed ? "Logout" : undefined}
           >
             <LogOut size={18} className="shrink-0" />
-            <span className={collapsed ? "lg:hidden" : ""}>Logout</span>
+            <span className={collapsed ? "lg:hidden" : ""}>
+              {loggingOut ? "Logging out..." : "Logout"}
+            </span>
           </button>
         </div>
       </aside>
@@ -225,11 +447,9 @@ function UserDashboard() {
           collapsed ? "lg:ml-20" : "lg:ml-64"
         }`}
       >
-
         {/* ------------------- TOPBAR ------------------- */}
         <header className="h-16 bg-white border-b border-gray-200 sticky top-0 z-30">
           <div className="h-full px-4 sm:px-6 flex items-center justify-between gap-4">
-
             <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={() => setMobileOpen(true)}
@@ -267,22 +487,45 @@ function UserDashboard() {
 
               <span className="hidden sm:block w-px h-6 bg-gray-200 mx-1" />
 
+              {/* Topbar user chip — real photo */}
               <Link
                 to="/user/profile"
                 className="flex items-center gap-2.5 pl-1 sm:pl-2 rounded-lg hover:bg-gray-50 py-1 pr-1 sm:pr-2 transition-colors"
               >
-                <img
-                  src="https://randomuser.me/api/portraits/men/75.jpg"
-                  alt="Khalid Abdikarim"
-                  className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-100"
-                  loading="lazy"
-                />
+                <div className="relative">
+                  {profilePhoto ? (
+                    <img
+                      src={profilePhoto}
+                      alt={displayName}
+                      className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-100"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                        const parent = e.currentTarget.parentElement;
+                        const fallback = parent.querySelector(
+                          ".topbar-avatar-fallback"
+                        );
+                        if (fallback) fallback.style.display = "flex";
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className="topbar-avatar-fallback w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ring-2 ring-amber-100"
+                    style={{
+                      backgroundColor: "#F5EFE6",
+                      color: "#6B4423",
+                      display: profilePhoto ? "none" : "flex",
+                    }}
+                  >
+                    {initials}
+                  </div>
+                </div>
+
                 <div className="hidden md:block leading-tight">
-                  <p className="text-sm font-semibold text-black">
-                    Khalid Abdikarim
+                  <p className="text-sm font-semibold text-black truncate max-w-[160px]">
+                    {displayName}
                   </p>
                   <p className="text-[11px] text-gray-500">
-                    Student
+                    {user?.program ? user.program : "Student"}
                   </p>
                 </div>
               </Link>
@@ -304,13 +547,22 @@ function UserDashboard() {
               rights reserved.
             </p>
             <div className="flex items-center gap-4 text-xs">
-              <a href="#" className="text-gray-500 hover:text-amber-800 transition-colors">
+              <a
+                href="#"
+                className="text-gray-500 hover:text-amber-800 transition-colors"
+              >
                 Help
               </a>
-              <a href="#" className="text-gray-500 hover:text-amber-800 transition-colors">
+              <a
+                href="#"
+                className="text-gray-500 hover:text-amber-800 transition-colors"
+              >
                 Privacy
               </a>
-              <a href="#" className="text-gray-500 hover:text-amber-800 transition-colors">
+              <a
+                href="#"
+                className="text-gray-500 hover:text-amber-800 transition-colors"
+              >
                 Terms
               </a>
             </div>

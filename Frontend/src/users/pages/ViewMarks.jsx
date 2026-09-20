@@ -1,5 +1,5 @@
 // src/users/pages/ViewMarks.jsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -23,61 +23,65 @@ import {
   Target,
   FileText,
   User,
-  ChevronDown,
   Shield,
-  AlertTriangle,
   Percent,
 } from 'lucide-react';
 
 // ============================================================
-// API CONFIGURATION
+// WORD DOCUMENT GENERATION
 // ============================================================
 
-const getApiBaseUrl = () => {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-  if (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) {
-    return process.env.REACT_APP_API_URL;
-  }
-  return 'http://localhost:5000';
-};
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  WidthType,
+  AlignmentType,
+  HeadingLevel,
+  BorderStyle,
+  ShadingType,
+} from 'docx';
+import { saveAs } from 'file-saver';
 
-const API_BASE_URL = getApiBaseUrl();
+// ============================================================
+// API CONFIGURATION — JSON SERVER
+// ============================================================
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use(
-  (config) => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// ============================================================
+// HELPERS — CURRENT STUDENT
+// ============================================================
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
+function getCurrentStudent() {
+  try {
+    const raw =
+      localStorage.getItem('user') || sessionStorage.getItem('user');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-);
+}
+
+function getStudentKeys() {
+  const student = getCurrentStudent();
+  if (!student) return [];
+  return [student.studentId, student.id].filter(Boolean).map(String);
+}
 
 // ============================================================
-// DESIGN TOKENS — Brown Sidebar Theme
+// DESIGN TOKENS
 // ============================================================
 
 const BRAND = {
@@ -94,7 +98,6 @@ const BRAND = {
 const SEMESTERS = ['Semester 1', 'Semester 2', 'Semester 3'];
 const ACADEMIC_YEARS = ['2023/2024', '2024/2025', '2025/2026'];
 
-// Result publication statuses
 const RESULT_STATUS_CONFIG = {
   Published: {
     bg: 'bg-emerald-50',
@@ -114,15 +117,14 @@ const RESULT_STATUS_CONFIG = {
     border: 'border-red-200',
     icon: XCircle,
   },
-  Incomplete: {
-    bg: 'bg-orange-50',
-    text: 'text-orange-700',
-    border: 'border-orange-200',
-    icon: AlertCircle,
+  Draft: {
+    bg: 'bg-gray-100',
+    text: 'text-gray-700',
+    border: 'border-gray-200',
+    icon: FileText,
   },
 };
 
-// Grade styling — subtle colors so brown chrome remains dominant
 const GRADE_STYLES = {
   A: 'bg-emerald-100 text-emerald-800 border-emerald-200',
   'A-': 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -140,14 +142,12 @@ const GRADE_STYLES = {
 const getGradeStyle = (grade) =>
   GRADE_STYLES[grade] || 'bg-gray-100 text-gray-700 border-gray-200';
 
-// Academic standing styling
 const STANDING_STYLES = {
   'First Class': 'text-emerald-700 bg-emerald-50 border-emerald-200',
   'Second Class Upper': 'text-blue-700 bg-blue-50 border-blue-200',
   'Second Class Lower': 'text-amber-700 bg-amber-50 border-amber-200',
   Pass: 'text-gray-700 bg-gray-50 border-gray-200',
   Fail: 'text-red-700 bg-red-50 border-red-200',
-  Probation: 'text-red-700 bg-red-50 border-red-200',
 };
 
 // ============================================================
@@ -174,6 +174,306 @@ const formatNumber = (val, decimals = 2) => {
   return num.toFixed(decimals);
 };
 
+const computeStanding = (gpa) => {
+  const g = parseFloat(gpa);
+  if (isNaN(g)) return null;
+  if (g >= 3.6) return 'First Class';
+  if (g >= 3.0) return 'Second Class Upper';
+  if (g >= 2.0) return 'Second Class Lower';
+  if (g >= 1.5) return 'Pass';
+  return 'Fail';
+};
+
+// ============================================================
+// WORD DOCUMENT BUILDER
+// ============================================================
+
+const buildResultSlipDoc = ({
+  student,
+  filters,
+  results,
+  stats,
+  generatedAt,
+}) => {
+  // ---- Helpers ----
+  const cell = (text, opts = {}) =>
+    new TableCell({
+      width: opts.width ? { size: opts.width, type: WidthType.PERCENTAGE } : undefined,
+      shading: opts.shading
+        ? { type: ShadingType.CLEAR, color: 'auto', fill: opts.shading }
+        : undefined,
+      margins: { top: 60, bottom: 60, left: 100, right: 100 },
+      children: [
+        new Paragraph({
+          alignment: opts.alignment || AlignmentType.LEFT,
+          children: [
+            new TextRun({
+              text: String(text ?? ''),
+              bold: !!opts.bold,
+              color: opts.color || '000000',
+              size: opts.size || 20,
+              font: 'Calibri',
+            }),
+          ],
+        }),
+      ],
+    });
+
+  const headerCell = (text, width) =>
+    cell(text, {
+      bold: true,
+      color: 'FFFFFF',
+      shading: BRAND.primary.replace('#', ''),
+      width,
+      alignment: AlignmentType.CENTER,
+      size: 20,
+    });
+
+  const labelValueRow = (label, value) =>
+    new TableRow({
+      children: [
+        cell(label, {
+          bold: true,
+          shading: 'F5EFE6',
+          width: 35,
+          color: BRAND.primaryDark.replace('#', ''),
+        }),
+        cell(value ?? '—', { width: 65 }),
+      ],
+    });
+
+  // ---- Title block ----
+  const titleBlock = [
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 80 },
+      children: [
+        new TextRun({
+          text: 'SKILLNEST UNIVERSITY',
+          bold: true,
+          size: 36,
+          color: BRAND.primary.replace('#', ''),
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 40 },
+      children: [
+        new TextRun({
+          text: 'Official Academic Result Slip',
+          bold: true,
+          size: 24,
+          color: BRAND.accent.replace('#', ''),
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 200 },
+      children: [
+        new TextRun({
+          text: `${filters.academicYear || 'All Academic Years'}  •  ${
+            filters.semester || 'All Semesters'
+          }`,
+          size: 20,
+          italics: true,
+          color: '555555',
+          font: 'Calibri',
+        }),
+      ],
+    }),
+  ];
+
+  // ---- Student info table ----
+  const studentTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      labelValueRow('Student Name', student?.fullName || '—'),
+      labelValueRow('Student ID', student?.studentId || '—'),
+      labelValueRow('Admission Number', student?.admissionNumber || '—'),
+      labelValueRow('Program', student?.program || '—'),
+      labelValueRow('Department', student?.department || '—'),
+      labelValueRow('Year of Study', student?.yearOfStudy || '—'),
+      labelValueRow(
+        'Academic Period',
+        `${filters.academicYear || 'All'} · ${
+          filters.semester || 'All Semesters'
+        }`
+      ),
+      labelValueRow('Date Issued', formatDate(generatedAt)),
+    ],
+  });
+
+  // ---- Results table ----
+  const resultHeader = new TableRow({
+    tableHeader: true,
+    children: [
+      headerCell('Unit Code', 12),
+      headerCell('Unit Name', 32),
+      headerCell('Credit Hrs', 10),
+      headerCell('CAT', 9),
+      headerCell('Exam', 9),
+      headerCell('Total', 9),
+      headerCell('Grade', 9),
+      headerCell('GP', 10),
+    ],
+  });
+
+  const resultRows = results.map(
+    (r) =>
+      new TableRow({
+        children: [
+          cell(r.unitCode || '—', { bold: true, alignment: AlignmentType.CENTER }),
+          cell(r.unitName || '—'),
+          cell(r.creditHours ?? '—', { alignment: AlignmentType.CENTER }),
+          cell(formatNumber(r.catMarks, 1), { alignment: AlignmentType.CENTER }),
+          cell(formatNumber(r.examMarks, 1), { alignment: AlignmentType.CENTER }),
+          cell(formatNumber(r.totalMarks, 1), {
+            bold: true,
+            alignment: AlignmentType.CENTER,
+          }),
+          cell(r.grade || '—', { bold: true, alignment: AlignmentType.CENTER }),
+          cell(formatNumber(r.gradePoint, 1), {
+            alignment: AlignmentType.CENTER,
+          }),
+        ],
+      })
+  );
+
+  const resultsTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [resultHeader, ...resultRows],
+  });
+
+  // ---- Summary table ----
+  const summaryTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      labelValueRow('Semester GPA', formatNumber(stats.semesterGPA, 2)),
+      labelValueRow('Cumulative GPA', formatNumber(stats.cumulativeGPA, 2)),
+      labelValueRow('Units Completed', stats.unitsCompleted),
+      labelValueRow('Total Credit Hours', stats.totalCreditHours),
+      labelValueRow('Academic Standing', stats.academicStanding || '—'),
+    ],
+  });
+
+  // ---- Footer ----
+  const footer = [
+    new Paragraph({ spacing: { before: 300 }, children: [] }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: 'This is an official document generated from SkillNest University records.',
+          italics: true,
+          size: 18,
+          color: '666666',
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      spacing: { before: 80 },
+      children: [
+        new TextRun({
+          text: 'Any alteration or forgery of this document is a punishable offence.',
+          italics: true,
+          size: 18,
+          color: '666666',
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      spacing: { before: 400 },
+      children: [
+        new TextRun({
+          text: 'Registrar Signature: __________________________',
+          size: 20,
+          font: 'Calibri',
+        }),
+      ],
+    }),
+    new Paragraph({
+      spacing: { before: 200 },
+      children: [
+        new TextRun({
+          text: 'Official Stamp: __________________________',
+          size: 20,
+          font: 'Calibri',
+        }),
+      ],
+    }),
+  ];
+
+  // ---- Full document ----
+  const doc = new Document({
+    creator: 'SkillNest University',
+    title: 'Academic Result Slip',
+    description: 'Official result slip generated from the student portal',
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: { top: 720, right: 720, bottom: 720, left: 720 },
+          },
+        },
+        children: [
+          ...titleBlock,
+
+          new Paragraph({
+            spacing: { before: 100, after: 80 },
+            children: [
+              new TextRun({
+                text: 'STUDENT INFORMATION',
+                bold: true,
+                size: 22,
+                color: BRAND.primaryDark.replace('#', ''),
+                font: 'Calibri',
+              }),
+            ],
+          }),
+          studentTable,
+
+          new Paragraph({
+            spacing: { before: 300, after: 80 },
+            children: [
+              new TextRun({
+                text: 'ACADEMIC RESULTS',
+                bold: true,
+                size: 22,
+                color: BRAND.primaryDark.replace('#', ''),
+                font: 'Calibri',
+              }),
+            ],
+          }),
+          resultsTable,
+
+          new Paragraph({
+            spacing: { before: 300, after: 80 },
+            children: [
+              new TextRun({
+                text: 'PERFORMANCE SUMMARY',
+                bold: true,
+                size: 22,
+                color: BRAND.primaryDark.replace('#', ''),
+                font: 'Calibri',
+              }),
+            ],
+          }),
+          summaryTable,
+
+          ...footer,
+        ],
+      },
+    ],
+  });
+
+  return doc;
+};
+
 // ============================================================
 // SUB-COMPONENTS
 // ============================================================
@@ -192,9 +492,7 @@ const ResultStatusBadge = ({ status }) => {
 };
 
 const GradeBadge = ({ grade }) => {
-  if (!grade) {
-    return <span className="text-sm text-gray-400">—</span>;
-  }
+  if (!grade) return <span className="text-sm text-gray-400">—</span>;
   return (
     <span
       className={`inline-flex items-center justify-center min-w-[38px] px-2.5 py-1 rounded-lg text-sm font-bold border ${getGradeStyle(
@@ -206,34 +504,17 @@ const GradeBadge = ({ grade }) => {
   );
 };
 
-// Summary Card — brown accents
 const SummaryCard = ({ icon: Icon, label, value, accent, subtitle }) => {
   const accentMap = {
-    brown: {
-      bg: 'bg-[#F5EFE6]',
-      text: 'text-[#6B4423]',
-      bar: 'bg-[#6B4423]',
-    },
-    tan: {
-      bg: 'bg-[#F5EFE6]',
-      text: 'text-[#8B5E34]',
-      bar: 'bg-[#8B5E34]',
-    },
-    cream: {
-      bg: 'bg-[#F5EFE6]',
-      text: 'text-[#A67C52]',
-      bar: 'bg-[#A67C52]',
-    },
+    brown: { bg: 'bg-[#F5EFE6]', text: 'text-[#6B4423]', bar: 'bg-[#6B4423]' },
+    tan: { bg: 'bg-[#F5EFE6]', text: 'text-[#8B5E34]', bar: 'bg-[#8B5E34]' },
+    cream: { bg: 'bg-[#F5EFE6]', text: 'text-[#A67C52]', bar: 'bg-[#A67C52]' },
     emerald: {
       bg: 'bg-emerald-50',
       text: 'text-emerald-600',
       bar: 'bg-emerald-500',
     },
-    blue: {
-      bg: 'bg-blue-50',
-      text: 'text-blue-600',
-      bar: 'bg-blue-500',
-    },
+    blue: { bg: 'bg-blue-50', text: 'text-blue-600', bar: 'bg-blue-500' },
   };
   const c = accentMap[accent] || accentMap.brown;
 
@@ -297,33 +578,12 @@ const EmptyState = () => (
 // ============================================================
 
 const ViewMarks = () => {
-  // ============================================================
-  // STATE MANAGEMENT
-  // ============================================================
-
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
+  const [allResults, setAllResults] = useState([]);
   const [results, setResults] = useState([]);
-  const [summary, setSummary] = useState({
-    currentGPA: null,
-    cumulativeGPA: null,
-    totalUnitsCompleted: 0,
-    totalCreditHours: 0,
-    currentSemester: null,
-    academicStanding: null,
-  });
-  const [semesterSummary, setSemesterSummary] = useState({
-    totalCreditHours: 0,
-    totalGradePoints: 0,
-    semesterGPA: null,
-  });
-  const [cumulativeSummary, setCumulativeSummary] = useState({
-    cumulativeGPA: null,
-    completedCredits: 0,
-    academicStanding: null,
-  });
 
   const [filters, setFilters] = useState({
     academicYear: '',
@@ -339,220 +599,200 @@ const ViewMarks = () => {
   const [detailModalOpen, setDetailModalOpen] = useState(false);
 
   // ============================================================
-  // API FUNCTIONS
+  // FETCH: only PUBLISHED results for the logged-in student
   // ============================================================
 
-  const fetchResults = useCallback(
-    async (showRefresh = false, customFilters = null) => {
-      if (showRefresh) setRefreshing(true);
-      else setLoading(true);
+  const fetchResults = useCallback(async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    else setLoading(true);
 
-      const activeFilters = customFilters || filters;
-
-      try {
-        const params = {};
-        if (activeFilters.academicYear)
-          params.academicYear = activeFilters.academicYear;
-        if (activeFilters.semester) params.semester = activeFilters.semester;
-
-        // Fetch results + GPA in parallel
-        const [resultsRes, gpaRes] = await Promise.all([
-          api.get('/api/student/results', { params }),
-          api.get('/api/student/gpa', { params }),
-        ]);
-
-        if (resultsRes.data.success) {
-          const data = resultsRes.data;
-          setResults(data.results || []);
-
-          // Available periods from backend for the dropdown
-          if (data.availablePeriods) {
-            setAvailablePeriods({
-              academicYears: data.availablePeriods.academicYears || [],
-              semesters: data.availablePeriods.semesters || [],
-            });
-          }
-
-          // Summary block (backend authoritative)
-          if (data.summary) {
-            setSummary({
-              currentGPA: data.summary.currentGPA ?? null,
-              cumulativeGPA: data.summary.cumulativeGPA ?? null,
-              totalUnitsCompleted: data.summary.totalUnitsCompleted ?? 0,
-              totalCreditHours: data.summary.totalCreditHours ?? 0,
-              currentSemester: data.summary.currentSemester ?? null,
-              academicStanding: data.summary.academicStanding ?? null,
-            });
-          }
-
-          // Semester summary block
-          if (data.semesterSummary) {
-            setSemesterSummary({
-              totalCreditHours:
-                data.semesterSummary.totalCreditHours ?? 0,
-              totalGradePoints:
-                data.semesterSummary.totalGradePoints ?? 0,
-              semesterGPA: data.semesterSummary.semesterGPA ?? null,
-            });
-          } else {
-            // Fallback: compute what backend didn't send — but only display
-            // what the backend provides. Never invent official values.
-            setSemesterSummary({
-              totalCreditHours: 0,
-              totalGradePoints: 0,
-              semesterGPA: null,
-            });
-          }
-        } else {
-          toast.error(
-            resultsRes.data.message || 'Results could not be loaded.'
-          );
-        }
-
-        if (gpaRes.data.success && gpaRes.data.cumulative) {
-          setCumulativeSummary({
-            cumulativeGPA: gpaRes.data.cumulative.cumulativeGPA ?? null,
-            completedCredits:
-              gpaRes.data.cumulative.completedCredits ?? 0,
-            academicStanding:
-              gpaRes.data.cumulative.academicStanding ?? null,
-          });
-        }
-
-        if (showRefresh) toast.success('Results refreshed successfully');
-      } catch (error) {
-        console.error('Error fetching results:', error);
-        toast.error(
-          error.response?.data?.message ||
-            'Results could not be loaded. Please try again.'
-        );
-      } finally {
+    try {
+      const student = getCurrentStudent();
+      if (!student) {
+        setAllResults([]);
+        setResults([]);
         setLoading(false);
         setRefreshing(false);
+        return;
       }
-    },
-    [filters]
-  );
 
-  const fetchResultDetails = async (resultId) => {
-    try {
-      const response = await api.get(
-        `/api/student/results/${resultId}`
-      );
-      if (response.data.success) return response.data.result;
-      throw new Error(
-        response.data.message || 'Failed to fetch result details'
-      );
-    } catch (error) {
-      console.error('Error fetching result details:', error);
-      throw error;
-    }
-  };
+      const keys = getStudentKeys();
 
-  const handleDownloadSlip = async () => {
-    setDownloading(true);
-    try {
-      const params = {};
-      if (filters.academicYear) params.academicYear = filters.academicYear;
-      if (filters.semester) params.semester = filters.semester;
+      const [resultsRes, unitsRes] = await Promise.all([
+        api.get('/results'),
+        api.get('/units'),
+      ]);
 
-      const response = await api.get('/api/student/result-slip', {
-        params,
-        responseType: 'blob',
+      const raw = Array.isArray(resultsRes.data) ? resultsRes.data : [];
+      const unitsList = Array.isArray(unitsRes.data) ? unitsRes.data : [];
+
+      // Keep only this student's PUBLISHED results
+      const minePublished = raw.filter((r) => {
+        const matches =
+          keys.includes(String(r.studentId)) ||
+          keys.includes(String(r.accountId)) ||
+          keys.includes(String(r.admissionNumber));
+        const published =
+          String(r.status || '').toLowerCase() === 'published';
+        return matches && published;
       });
 
-      const contentType = response.headers['content-type'];
+      const enriched = minePublished.map((r) => {
+        const unit = unitsList.find(
+          (u) =>
+            String(u.id) === String(r.unitId) ||
+            String(u.unitCode) === String(r.unitCode)
+        );
+        return {
+          ...r,
+          unitCode: r.unitCode || unit?.unitCode || '—',
+          unitName: r.unitName || unit?.unitName || '—',
+          creditHours: r.creditHours ?? unit?.creditHours ?? 0,
+          lecturer: r.lecturer || unit?.lecturer || '',
+        };
+      });
 
-      if (contentType && contentType.includes('application/json')) {
-        const text = await response.data.text();
-        const data = JSON.parse(text);
-        if (data.pdfUrl) {
-          window.open(data.pdfUrl, '_blank');
-          toast.success('Result slip opened');
-        } else {
-          toast.error('Result slip is currently unavailable.');
-        }
-      } else {
-        const blob = new Blob([response.data], { type: 'application/pdf' });
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `Result_Slip_${
-          filters.academicYear || 'current'
-        }_${filters.semester || ''}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-        toast.success('Result slip downloaded successfully');
-      }
+      setAllResults(enriched);
+
+      const years = [
+        ...new Set(enriched.map((r) => r.academicYear).filter(Boolean)),
+      ].sort((a, b) => b.localeCompare(a));
+      const sems = [
+        ...new Set(enriched.map((r) => r.semester).filter(Boolean)),
+      ];
+      setAvailablePeriods({ academicYears: years, semesters: sems });
+
+      applyFilters(enriched, filters);
+
+      if (showRefresh) toast.success('Results refreshed successfully');
     } catch (error) {
-      console.error('Error downloading result slip:', error);
-
-      if (error.response?.data) {
-        try {
-          const text = await error.response.data.text?.();
-          const data = JSON.parse(text);
-          if (data.pdfUrl) {
-            window.open(data.pdfUrl, '_blank');
-            toast.success('Result slip opened');
-            return;
-          }
-        } catch {
-          /* ignore */
-        }
+      console.error('Error fetching results:', error);
+      if (!error.response) {
+        toast.error(
+          'Cannot reach JSON Server. Make sure it is running on port 5000.'
+        );
+      } else {
+        toast.error('Results could not be loaded. Please try again.');
       }
-
-      toast.error(
-        error.response?.data?.message ||
-          'Result slip is currently unavailable.'
-      );
     } finally {
-      setDownloading(false);
+      setLoading(false);
+      setRefreshing(false);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const handleViewDetails = async (result) => {
-    // If backend already provided full detail, use it
-    if (
-      result.catMarks !== undefined &&
-      result.examMarks !== undefined &&
-      result.publicationDate
-    ) {
-      setSelectedResult(result);
-      setDetailModalOpen(true);
-      return;
-    }
-
-    try {
-      const id = result.id || result.resultId;
-      const fullResult = await fetchResultDetails(id);
-      setSelectedResult(fullResult);
-      setDetailModalOpen(true);
-    } catch {
-      toast.error('Result details could not be loaded.');
-    }
+  const applyFilters = (list, f) => {
+    let filtered = [...list];
+    if (f.academicYear)
+      filtered = filtered.filter((r) => r.academicYear === f.academicYear);
+    if (f.semester)
+      filtered = filtered.filter((r) => r.semester === f.semester);
+    setResults(filtered);
   };
 
   const handleFilterChange = (key, value) => {
     const next = { ...filters, [key]: value };
     setFilters(next);
-    // Reset dependent filter if needed
-    fetchResults(false, next);
+    applyFilters(allResults, next);
   };
 
   // ============================================================
-  // EFFECTS
+  // DOWNLOAD WORD DOCUMENT
   // ============================================================
+
+  const handleDownloadSlip = async () => {
+    if (!results.length) {
+      toast.info('No results to download.');
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      const student = getCurrentStudent();
+      const generatedAt = new Date().toISOString();
+
+      const doc = buildResultSlipDoc({
+        student,
+        filters,
+        results,
+        stats,
+        generatedAt,
+      });
+
+      // Convert to Blob and trigger download
+      const blob = await Packer.toBlob(doc);
+      const filename = `Result_Slip_${
+        student?.studentId || 'student'
+      }_${filters.academicYear || 'all'}_${
+        (filters.semester || 'all').replace(/\s+/g, '_')
+      }.docx`;
+
+      saveAs(blob, filename);
+      toast.success('Result slip downloaded as Word document.');
+    } catch (error) {
+      console.error('Error generating Word document:', error);
+      toast.error('Failed to generate result slip. Please try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleViewDetails = (result) => {
+    setSelectedResult(result);
+    setDetailModalOpen(true);
+  };
 
   useEffect(() => {
     fetchResults();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchResults]);
 
   // ============================================================
-  // DERIVED VALUES
+  // DERIVED — GPA COMPUTATIONS
   // ============================================================
+
+  const stats = useMemo(() => {
+    const semRows = results.filter(
+      (r) => r.gradePoint != null && parseFloat(r.gradePoint) >= 0
+    );
+    const semCredits = semRows.reduce(
+      (sum, r) => sum + (parseFloat(r.creditHours) || 0),
+      0
+    );
+    const semPoints = semRows.reduce(
+      (sum, r) =>
+        sum +
+        (parseFloat(r.gradePoint) || 0) * (parseFloat(r.creditHours) || 0),
+      0
+    );
+    const semesterGPA = semCredits > 0 ? semPoints / semCredits : null;
+
+    const cumRows = allResults.filter(
+      (r) => r.gradePoint != null && parseFloat(r.gradePoint) > 0
+    );
+    const cumCredits = cumRows.reduce(
+      (sum, r) => sum + (parseFloat(r.creditHours) || 0),
+      0
+    );
+    const cumPoints = cumRows.reduce(
+      (sum, r) =>
+        sum +
+        (parseFloat(r.gradePoint) || 0) * (parseFloat(r.creditHours) || 0),
+      0
+    );
+    const cumulativeGPA = cumCredits > 0 ? cumPoints / cumCredits : null;
+
+    return {
+      semesterGPA,
+      cumulativeGPA,
+      unitsCompleted: cumRows.length,
+      totalCreditHours: cumCredits,
+      academicStanding: computeStanding(cumulativeGPA),
+      currentSemester:
+        results[0]?.semester || allResults[0]?.semester || null,
+      semesterCredits: semCredits,
+      semesterPoints: semPoints,
+    };
+  }, [results, allResults]);
 
   const academicYears =
     availablePeriods.academicYears.length > 0
@@ -585,9 +825,7 @@ const ViewMarks = () => {
       />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* ============================================================
-            PAGE HEADER
-            ============================================================ */}
+        {/* PAGE HEADER */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -607,7 +845,7 @@ const ViewMarks = () => {
                 Marks & Results
               </h1>
               <p className="text-sm text-gray-500 mt-1 ml-11">
-                View your academic performance and semester results.
+                View your academic performance and download your result slip.
               </p>
             </div>
 
@@ -640,7 +878,7 @@ const ViewMarks = () => {
                   <Download className="w-4 h-4" />
                 )}
                 <span className="hidden sm:inline">
-                  {downloading ? 'Downloading...' : 'Download Result Slip'}
+                  {downloading ? 'Generating...' : 'Download Result Slip'}
                 </span>
                 <span className="sm:hidden">Slip</span>
               </button>
@@ -648,9 +886,7 @@ const ViewMarks = () => {
           </div>
         </div>
 
-        {/* ============================================================
-            IMPORTANT NOTICE
-            ============================================================ */}
+        {/* OFFICIAL NOTICE */}
         <div
           className="flex items-start gap-3 p-4 rounded-xl mb-6 border"
           style={{
@@ -669,70 +905,63 @@ const ViewMarks = () => {
             >
               Official Results Notice
             </p>
-            <p
-              className="text-sm mt-0.5"
-              style={{ color: BRAND.accent }}
-            >
-              Only officially published results are displayed. Official marks,
-              grades, and GPA are maintained by the University and cannot be
-              edited.
+            <p className="text-sm mt-0.5" style={{ color: BRAND.accent }}>
+              Only officially published results are displayed. Clicking{' '}
+              <strong>Download Result Slip</strong> generates a Word document
+              you can print or keep for your records.
             </p>
           </div>
         </div>
 
-        {/* ============================================================
-            ACADEMIC PERFORMANCE SUMMARY
-            ============================================================ */}
+        {/* SUMMARY */}
         {!loading && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
             <SummaryCard
               icon={Percent}
-              label="Current GPA"
-              value={formatNumber(summary.currentGPA)}
+              label="Semester GPA"
+              value={formatNumber(stats.semesterGPA)}
               accent="brown"
-              subtitle="This semester"
+              subtitle="Selected period"
             />
             <SummaryCard
               icon={TrendingUp}
               label="Cumulative GPA"
-              value={formatNumber(summary.cumulativeGPA)}
+              value={formatNumber(stats.cumulativeGPA)}
               accent="tan"
               subtitle="Overall"
             />
             <SummaryCard
               icon={CheckCircle}
               label="Units Completed"
-              value={summary.totalUnitsCompleted}
+              value={stats.unitsCompleted}
               accent="emerald"
               subtitle="Passed"
             />
             <SummaryCard
               icon={Layers}
               label="Credit Hours"
-              value={summary.totalCreditHours}
+              value={stats.totalCreditHours}
               accent="cream"
               subtitle="Total earned"
             />
             <SummaryCard
               icon={Calendar}
               label="Current Semester"
-              value={summary.currentSemester || '—'}
+              value={stats.currentSemester || '—'}
               accent="blue"
               subtitle="Active"
             />
             <SummaryCard
               icon={Award}
               label="Academic Standing"
-              value={summary.academicStanding || '—'}
+              value={stats.academicStanding || '—'}
               accent="brown"
               subtitle="Current"
             />
           </div>
         )}
 
-        {/* ============================================================
-            SEMESTER FILTER
-            ============================================================ */}
+        {/* FILTERS */}
         {!loading && (
           <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
             <div className="flex items-center gap-2 mb-4">
@@ -744,7 +973,7 @@ const ViewMarks = () => {
                 Select Academic Period
               </h2>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
                   Academic Year
@@ -755,14 +984,6 @@ const ViewMarks = () => {
                     handleFilterChange('academicYear', e.target.value)
                   }
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = BRAND.primary;
-                    e.currentTarget.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
                 >
                   <option value="">All Academic Years</option>
                   {academicYears.map((y) => (
@@ -783,14 +1004,6 @@ const ViewMarks = () => {
                     handleFilterChange('semester', e.target.value)
                   }
                   className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = BRAND.primary;
-                    e.currentTarget.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
                 >
                   <option value="">All Semesters</option>
                   {semesters.map((s) => (
@@ -800,26 +1013,11 @@ const ViewMarks = () => {
                   ))}
                 </select>
               </div>
-
-              <div className="flex items-end sm:col-span-2 lg:col-span-2">
-                <p className="text-xs text-gray-500">
-                  Showing results for{' '}
-                  <span className="font-semibold text-gray-700">
-                    {filters.academicYear || 'all years'}
-                  </span>{' '}
-                  ·{' '}
-                  <span className="font-semibold text-gray-700">
-                    {filters.semester || 'all semesters'}
-                  </span>
-                </p>
-              </div>
             </div>
           </div>
         )}
 
-        {/* ============================================================
-            RESULTS TABLE
-            ============================================================ */}
+        {/* RESULTS TABLE */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
           {loading ? (
             <TableSkeleton />
@@ -827,7 +1025,6 @@ const ViewMarks = () => {
             <EmptyState />
           ) : (
             <>
-              {/* Desktop Table */}
               <div className="hidden lg:block overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -865,7 +1062,7 @@ const ViewMarks = () => {
                   <tbody className="divide-y divide-gray-100">
                     {results.map((r) => (
                       <tr
-                        key={r.id || r.resultId}
+                        key={r.id}
                         className="hover:bg-gray-50 transition-colors"
                       >
                         <td className="px-4 py-3.5">
@@ -917,18 +1114,8 @@ const ViewMarks = () => {
                           <div className="flex items-center justify-center">
                             <button
                               onClick={() => handleViewDetails(r)}
-                              className="p-1.5 text-gray-500 rounded-lg transition-colors"
+                              className="p-1.5 text-gray-500 hover:text-[#6B4423] hover:bg-[#F5EFE6] rounded-lg transition-colors"
                               title="View Result Details"
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.color = BRAND.primary;
-                                e.currentTarget.style.backgroundColor =
-                                  BRAND.primarySoft;
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.color = '#6b7280';
-                                e.currentTarget.style.backgroundColor =
-                                  'transparent';
-                              }}
                             >
                               <Eye className="w-4 h-4" />
                             </button>
@@ -944,7 +1131,7 @@ const ViewMarks = () => {
               <div className="lg:hidden divide-y divide-gray-100">
                 {results.map((r) => (
                   <div
-                    key={r.id || r.resultId}
+                    key={r.id}
                     className="p-4 hover:bg-gray-50 transition-colors"
                   >
                     <div className="flex items-start justify-between gap-3 mb-3">
@@ -1004,12 +1191,9 @@ const ViewMarks = () => {
           )}
         </div>
 
-        {/* ============================================================
-            SEMESTER GPA + CUMULATIVE PERFORMANCE
-            ============================================================ */}
+        {/* SEMESTER + CUMULATIVE */}
         {!loading && hasResults && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Semester GPA */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div
                 className="px-5 py-3 border-b border-gray-200"
@@ -1029,7 +1213,7 @@ const ViewMarks = () => {
                     Total Credit Hours
                   </span>
                   <span className="text-sm font-semibold text-gray-900">
-                    {semesterSummary.totalCreditHours}
+                    {stats.semesterCredits}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -1037,7 +1221,7 @@ const ViewMarks = () => {
                     Total Grade Points
                   </span>
                   <span className="text-sm font-semibold text-gray-900">
-                    {formatNumber(semesterSummary.totalGradePoints, 2)}
+                    {formatNumber(stats.semesterPoints, 2)}
                   </span>
                 </div>
                 <div className="pt-3 border-t border-gray-100 flex items-center justify-between">
@@ -1051,13 +1235,12 @@ const ViewMarks = () => {
                     className="text-2xl font-bold"
                     style={{ color: BRAND.primary }}
                   >
-                    {formatNumber(semesterSummary.semesterGPA, 2)}
+                    {formatNumber(stats.semesterGPA, 2)}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Cumulative Performance */}
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div
                 className="px-5 py-3 border-b border-gray-200"
@@ -1077,22 +1260,21 @@ const ViewMarks = () => {
                     Completed Credits
                   </span>
                   <span className="text-sm font-semibold text-gray-900">
-                    {cumulativeSummary.completedCredits}
+                    {stats.totalCreditHours}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">
                     Academic Standing
                   </span>
-                  {cumulativeSummary.academicStanding ? (
+                  {stats.academicStanding ? (
                     <span
                       className={`text-xs font-semibold px-3 py-1 rounded-full border ${
-                        STANDING_STYLES[
-                          cumulativeSummary.academicStanding
-                        ] || 'text-gray-700 bg-gray-50 border-gray-200'
+                        STANDING_STYLES[stats.academicStanding] ||
+                        'text-gray-700 bg-gray-50 border-gray-200'
                       }`}
                     >
-                      {cumulativeSummary.academicStanding}
+                      {stats.academicStanding}
                     </span>
                   ) : (
                     <span className="text-sm text-gray-400">—</span>
@@ -1109,7 +1291,7 @@ const ViewMarks = () => {
                     className="text-2xl font-bold"
                     style={{ color: BRAND.primary }}
                   >
-                    {formatNumber(cumulativeSummary.cumulativeGPA, 2)}
+                    {formatNumber(stats.cumulativeGPA, 2)}
                   </span>
                 </div>
               </div>
@@ -1117,9 +1299,6 @@ const ViewMarks = () => {
           </div>
         )}
 
-        {/* ============================================================
-            FOOTER REMINDER
-            ============================================================ */}
         {!loading && hasResults && (
           <div className="mt-6 flex items-start gap-2 p-3 bg-gray-100 border border-gray-200 rounded-lg">
             <Info className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
@@ -1132,13 +1311,10 @@ const ViewMarks = () => {
         )}
       </div>
 
-      {/* ============================================================
-          RESULT DETAILS MODAL
-          ============================================================ */}
+      {/* DETAIL MODAL */}
       {detailModalOpen && selectedResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            {/* Header */}
             <div
               className="flex items-center justify-between p-5 border-b border-gray-200"
               style={{
@@ -1175,9 +1351,7 @@ const ViewMarks = () => {
               </button>
             </div>
 
-            {/* Body */}
             <div className="flex-1 overflow-y-auto p-6">
-              {/* Unit header */}
               <div className="mb-6">
                 <div className="flex items-start justify-between gap-4 mb-3 flex-wrap">
                   <div className="flex-1 min-w-0">
@@ -1198,7 +1372,6 @@ const ViewMarks = () => {
                 </div>
               </div>
 
-              {/* Marks grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
                 <div className="p-4 bg-gray-50 rounded-xl">
                   <div className="flex items-center gap-2 mb-1">
@@ -1239,9 +1412,7 @@ const ViewMarks = () => {
                 <div className="p-4 bg-gray-50 rounded-xl">
                   <div className="flex items-center gap-2 mb-1">
                     <Award className="w-4 h-4 text-gray-400" />
-                    <p className="text-xs font-medium text-gray-500">
-                      Grade
-                    </p>
+                    <p className="text-xs font-medium text-gray-500">Grade</p>
                   </div>
                   <div className="mt-1">
                     <GradeBadge grade={selectedResult.grade} />
@@ -1273,7 +1444,6 @@ const ViewMarks = () => {
                 </div>
               </div>
 
-              {/* Meta info */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 border border-gray-200 rounded-xl">
                   <div className="flex items-center gap-2 mb-1">
@@ -1310,12 +1480,11 @@ const ViewMarks = () => {
                     </p>
                   </div>
                   <p className="text-sm font-semibold text-gray-900">
-                    {formatDate(selectedResult.publicationDate)}
+                    {formatDate(selectedResult.publishedAt)}
                   </p>
                 </div>
               </div>
 
-              {/* Remarks if present */}
               {selectedResult.remarks && (
                 <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
                   <p className="text-xs font-semibold text-amber-800 mb-1">
@@ -1328,7 +1497,6 @@ const ViewMarks = () => {
               )}
             </div>
 
-            {/* Footer */}
             <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-200 bg-gray-50">
               <button
                 onClick={() => {

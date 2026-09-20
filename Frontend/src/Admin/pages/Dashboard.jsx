@@ -14,8 +14,6 @@ import {
   Award,
   UserCog,
   Settings,
-  TrendingUp,
-  TrendingDown,
   Clock,
   CheckCircle,
   XCircle,
@@ -25,22 +23,16 @@ import {
   Loader2,
   ChevronRight,
   ArrowRight,
-  Bell,
   Activity,
   Calendar,
   Hash,
   User,
   BookMarked,
-  Percent,
-  Target,
-  Building2,
-  Send,
-  Megaphone,
-  Layers,
   BarChart3,
   PieChart as PieIcon,
   LineChart as LineIcon,
   Eye,
+  Megaphone,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -59,50 +51,34 @@ import {
 } from 'recharts';
 
 // ============================================================
-// API CONFIGURATION
+// API CONFIGURATION — JSON SERVER
 // ============================================================
 
-const getApiBaseUrl = () => {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
-  }
-  return 'http://localhost:5000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use(
-  (config) => {
-    const token =
-      localStorage.getItem('adminToken') ||
-      sessionStorage.getItem('adminToken') ||
-      localStorage.getItem('token') ||
-      sessionStorage.getItem('token');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// ============================================================
+// HELPERS
+// ============================================================
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/adminlogin';
-    }
-    return Promise.reject(error);
+function getCurrentAdmin() {
+  try {
+    const raw =
+      localStorage.getItem('adminUser') || sessionStorage.getItem('adminUser');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-);
+}
 
 // ============================================================
-// DESIGN TOKENS — SkillNest Brown/Amber Theme
+// DESIGN TOKENS
 // ============================================================
 
 const BRAND = {
@@ -117,7 +93,6 @@ const BRAND = {
   dark: '#3E2C1C',
 };
 
-// Chart palette
 const APPLICATION_COLORS = {
   Draft: '#9CA3AF',
   Submitted: '#3B82F6',
@@ -144,7 +119,7 @@ const BAR_COLOR = '#8B5E34';
 
 const APPLICATION_STATUSES = {
   Draft: { bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-200', icon: FileText },
-  Submitted: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: Send },
+  Submitted: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200', icon: FileText },
   'Under Review': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', icon: Clock },
   Approved: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: CheckCircle },
   Rejected: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: XCircle },
@@ -164,6 +139,7 @@ const RESULT_STATUSES = {
   Published: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: CheckCircle },
   Withheld: { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200', icon: AlertCircle },
   Incomplete: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', icon: FileWarning },
+  Draft: { bg: 'bg-gray-100', text: 'text-gray-700', border: 'border-gray-200', icon: FileText },
 };
 
 const GRADE_STYLES = {
@@ -181,7 +157,7 @@ const GRADE_STYLES = {
 };
 
 // ============================================================
-// UTILITY FUNCTIONS
+// UTILITY
 // ============================================================
 
 const formatDate = (dateString) => {
@@ -239,7 +215,7 @@ const StatusBadge = ({ status, configMap }) => {
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${config.bg} ${config.text} ${config.border}`}
     >
       <Icon className="w-3.5 h-3.5" />
-      {status}
+      {status || '—'}
     </span>
   );
 };
@@ -423,30 +399,20 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Data
+  // Raw data
   const [admin, setAdmin] = useState(null);
-  const [stats, setStats] = useState(null);
-  const [applicationStats, setApplicationStats] = useState(null);
-  const [applicationTrend, setApplicationTrend] = useState([]);
-  const [studentStats, setStudentStats] = useState(null);
-  const [studentsByProgram, setStudentsByProgram] = useState([]);
-  const [unitStats, setUnitStats] = useState(null);
-  const [recentUnits, setRecentUnits] = useState([]);
-  const [registrationStats, setRegistrationStats] = useState(null);
-  const [registrationTrend, setRegistrationTrend] = useState([]);
-  const [recentRegistrations, setRecentRegistrations] = useState([]);
-  const [resultStats, setResultStats] = useState(null);
-  const [gradeDistribution, setGradeDistribution] = useState([]);
-  const [gpaTrend, setGpaTrend] = useState([]);
-  const [recentResults, setRecentResults] = useState([]);
-  const [recentApplications, setRecentApplications] = useState([]);
-  const [recentStudents, setRecentStudents] = useState([]);
-  const [userStats, setUserStats] = useState(null);
-  const [recentActivity, setRecentActivity] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [applications, setApplications] = useState([]);
+  const [units, setUnits] = useState([]);
+  const [registrations, setRegistrations] = useState([]);
+  const [results, setResults] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [academicYears, setAcademicYears] = useState([]);
+  const [semesters, setSemesters] = useState([]);
 
   // ============================================================
-  // FETCH
+  // FETCH EVERYTHING
   // ============================================================
 
   const fetchDashboard = useCallback(async (showRefresh = false) => {
@@ -454,132 +420,64 @@ const Dashboard = () => {
     else setLoading(true);
 
     try {
-      const results = await Promise.allSettled([
-        api.get('/api/admin/dashboard'),
-        api.get('/api/admin/applications'),
-        api.get('/api/admin/applications/trend'),
-        api.get('/api/admin/students/statistics'),
-        api.get('/api/admin/students'),
-        api.get('/api/admin/units'),
-        api.get('/api/admin/unit-registration'),
-        api.get('/api/admin/unit-registration/trend'),
-        api.get('/api/admin/marks'),
-        api.get('/api/admin/results/gpa-trend'),
-        api.get('/api/admin/users'),
-        api.get('/api/admin/activity'),
-        api.get('/api/admin/announcements'),
-      ]);
+      const cached = getCurrentAdmin();
 
       const [
-        dashboardRes,
-        applicationsRes,
-        appTrendRes,
-        studentStatsRes,
-        studentsRes,
+        adminRes,
+        accountsRes,
+        profilesRes,
+        appsRes,
         unitsRes,
-        registrationsRes,
-        regTrendRes,
-        marksRes,
-        gpaTrendRes,
-        usersRes,
-        activityRes,
+        regsRes,
+        resultsRes,
         annRes,
-      ] = results;
+        ayRes,
+        semRes,
+      ] = await Promise.allSettled([
+        cached?.id
+          ? api.get(`/adminCredentials/${cached.id}`)
+          : Promise.resolve({ data: null }),
+        api.get('/accounts'),
+        api.get('/profiles'),
+        api.get('/applications'),
+        api.get('/units'),
+        api.get('/unitRegistrations'),
+        api.get('/results'),
+        api.get('/announcements'),
+        api.get('/academicYears'),
+        api.get('/semesters'),
+      ]);
 
-      // Dashboard main payload
-      if (dashboardRes.status === 'fulfilled' && dashboardRes.value.data?.success) {
-        const d = dashboardRes.value.data;
-        setAdmin(d.admin || null);
-        setStats(d.stats || null);
-      }
+      const safeArr = (r) =>
+        r.status === 'fulfilled' && Array.isArray(r.value.data)
+          ? r.value.data
+          : [];
 
-      // Applications
-      if (applicationsRes.status === 'fulfilled' && applicationsRes.value.data?.success) {
-        const d = applicationsRes.value.data;
-        setRecentApplications(d.applications?.slice(0, 5) || []);
-        setApplicationStats(d.stats || null);
-      }
+      const fetchedAdmin =
+        adminRes.status === 'fulfilled' &&
+        adminRes.value.data &&
+        !Array.isArray(adminRes.value.data)
+          ? adminRes.value.data
+          : cached;
 
-      // Application trend
-      if (appTrendRes.status === 'fulfilled' && appTrendRes.value.data?.success) {
-        setApplicationTrend(appTrendRes.value.data.trend || []);
-      }
-
-      // Student statistics
-      if (studentStatsRes.status === 'fulfilled' && studentStatsRes.value.data?.success) {
-        const d = studentStatsRes.value.data;
-        setStudentStats(d.stats || null);
-        setStudentsByProgram(d.byProgram || []);
-      }
-
-      // Recent students
-      if (studentsRes.status === 'fulfilled' && studentsRes.value.data?.success) {
-        setRecentStudents(
-          (studentsRes.value.data.students || []).slice(0, 5)
-        );
-      }
-
-      // Units
-      if (unitsRes.status === 'fulfilled' && unitsRes.value.data?.success) {
-        const d = unitsRes.value.data;
-        setUnitStats(d.stats || null);
-        setRecentUnits((d.units || []).slice(0, 5));
-      }
-
-      // Registrations
-      if (registrationsRes.status === 'fulfilled' && registrationsRes.value.data?.success) {
-        const d = registrationsRes.value.data;
-        setRegistrationStats(d.stats || null);
-        setRecentRegistrations((d.registrations || []).slice(0, 5));
-      }
-
-      // Registration trend
-      if (regTrendRes.status === 'fulfilled' && regTrendRes.value.data?.success) {
-        setRegistrationTrend(regTrendRes.value.data.trend || []);
-      }
-
-      // Marks
-      if (marksRes.status === 'fulfilled' && marksRes.value.data?.success) {
-        const d = marksRes.value.data;
-        setResultStats(d.stats || null);
-        setGradeDistribution(d.gradeDistribution || []);
-        setRecentResults((d.results || []).slice(0, 5));
-      }
-
-      // GPA trend
-      if (gpaTrendRes.status === 'fulfilled' && gpaTrendRes.value.data?.success) {
-        setGpaTrend(gpaTrendRes.value.data.trend || []);
-      }
-
-      // Users
-      if (usersRes.status === 'fulfilled' && usersRes.value.data?.success) {
-        setUserStats(usersRes.value.data.stats || null);
-      }
-
-      // Activity
-      if (activityRes.status === 'fulfilled' && activityRes.value.data?.success) {
-        setRecentActivity(activityRes.value.data.activities || []);
-      }
-
-      // Announcements
-      if (annRes.status === 'fulfilled' && annRes.value.data?.success) {
-        setAnnouncements(
-          (annRes.value.data.announcements || []).slice(0, 5)
-        );
-      }
+      setAdmin(fetchedAdmin);
+      setAccounts(safeArr(accountsRes));
+      setProfiles(safeArr(profilesRes));
+      setApplications(safeArr(appsRes));
+      setUnits(safeArr(unitsRes));
+      setRegistrations(safeArr(regsRes));
+      setResults(safeArr(resultsRes));
+      setAnnouncements(safeArr(annRes));
+      setAcademicYears(safeArr(ayRes));
+      setSemesters(safeArr(semRes));
 
       if (showRefresh) toast.success('Dashboard refreshed successfully');
     } catch (error) {
       console.error('Dashboard error:', error);
-
-      if (error.response?.status === 401) {
-        toast.error('Your session has expired. Please login again.');
-      } else if (error.response?.status === 403) {
-        toast.error('You are not authorized to view this dashboard.');
-      } else if (error.response?.status === 500) {
-        toast.error('Server error. Please try again later.');
-      } else if (!error.response) {
-        toast.error('Unable to connect to the server.');
+      if (!error.response) {
+        toast.error(
+          'Cannot reach JSON Server. Make sure it is running on port 5000.'
+        );
       } else {
         toast.error('Unable to load dashboard information.');
       }
@@ -594,12 +492,441 @@ const Dashboard = () => {
   }, [fetchDashboard]);
 
   // ============================================================
-  // DERIVED DATA FOR CHARTS
+  // DERIVED: STUDENTS / STAFF / ADMINS
   // ============================================================
 
-  // Application pie chart
+  const students = useMemo(
+    () => accounts.filter((a) => !a.role || a.role === 'student'),
+    [accounts]
+  );
+
+  const lecturers = useMemo(
+    () => accounts.filter((a) => a.role === 'lecturer'),
+    [accounts]
+  );
+
+  const staff = useMemo(
+    () => accounts.filter((a) => a.role === 'staff'),
+    [accounts]
+  );
+
+  const admins = useMemo(
+    () => accounts.filter((a) => a.role === 'admin'),
+    [accounts]
+  );
+
+  // Enrich students with profile photo + full details
+  const enrichedStudents = useMemo(() => {
+    return students.map((s) => {
+      const key = String(s.studentId || s.id);
+      const profile = profiles.find(
+        (p) =>
+          String(p.studentId) === key ||
+          String(p.accountId) === String(s.id)
+      );
+      return {
+        ...s,
+        full_name: profile?.fullName || s.fullName || '—',
+        profile_photo: profile?.profilePhoto || s.profilePhoto || null,
+        phone: profile?.phone || s.phone || null,
+        county: profile?.county || null,
+        city: profile?.city || null,
+      };
+    });
+  }, [students, profiles]);
+
+  // ============================================================
+  // DERIVED: STUDENT STATS
+  // ============================================================
+
+  const studentStats = useMemo(() => {
+    const total = enrichedStudents.length;
+    const active = enrichedStudents.filter(
+      (s) =>
+        String(s.accountStatus || s.status || '').toLowerCase() === 'active'
+    ).length;
+    const inactive = enrichedStudents.filter(
+      (s) =>
+        String(s.accountStatus || s.status || '').toLowerCase() === 'inactive'
+    ).length;
+    const pending = enrichedStudents.filter(
+      (s) =>
+        String(s.accountStatus || s.status || '').toLowerCase() === 'pending'
+    ).length;
+
+    // New this semester — registered in the last 90 days
+    const ninetyDaysAgo = Date.now() - 90 * 24 * 60 * 60 * 1000;
+    const newThisSemester = enrichedStudents.filter(
+      (s) => s.createdAt && new Date(s.createdAt).getTime() >= ninetyDaysAgo
+    ).length;
+
+    return { total, active, inactive, pending, new_students: newThisSemester };
+  }, [enrichedStudents]);
+
+  // Students grouped by program
+  const studentsByProgram = useMemo(() => {
+    const counts = {};
+    enrichedStudents.forEach((s) => {
+      const p = s.program || 'Unknown';
+      counts[p] = (counts[p] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([program, count]) => ({ program, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [enrichedStudents]);
+
+  // ============================================================
+  // DERIVED: APPLICATIONS
+  // ============================================================
+
+  const applicationStats = useMemo(() => {
+    const total = applications.length;
+    const stats = {
+      total,
+      Draft: 0,
+      Submitted: 0,
+      'Under Review': 0,
+      Approved: 0,
+      Rejected: 0,
+      'Requires Correction': 0,
+    };
+    applications.forEach((a) => {
+      const status = a.status || 'Draft';
+      if (stats[status] !== undefined) stats[status] += 1;
+    });
+    return stats;
+  }, [applications]);
+
+  const recentApplications = useMemo(
+    () =>
+      [...applications]
+        .sort(
+          (a, b) =>
+            new Date(b.submittedAt || b.createdAt || 0) -
+            new Date(a.submittedAt || a.createdAt || 0)
+        )
+        .slice(0, 5)
+        .map((a) => {
+          const acc = accounts.find(
+            (x) =>
+              String(x.studentId) === String(a.studentId) ||
+              String(x.id) === String(a.studentId)
+          );
+          return {
+            ...a,
+            student_name:
+              acc?.fullName ||
+              `${acc?.firstName || ''} ${acc?.lastName || ''}`.trim() ||
+              a.studentName ||
+              '—',
+          };
+        }),
+    [applications, accounts]
+  );
+
+  // Application trend — count per month for the last 6 months
+  const applicationTrend = useMemo(() => {
+    const months = {};
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = d.toLocaleString('en-US', {
+        month: 'short',
+        year: 'numeric',
+      });
+      months[label] = 0;
+    }
+
+    applications.forEach((a) => {
+      const dateStr = a.submittedAt || a.createdAt;
+      if (!dateStr) return;
+      const d = new Date(dateStr);
+      const label = d.toLocaleString('en-US', {
+        month: 'short',
+        year: 'numeric',
+      });
+      if (months[label] !== undefined) months[label] += 1;
+    });
+
+    return Object.entries(months).map(([month, count]) => ({ month, count }));
+  }, [applications]);
+
+  // ============================================================
+  // DERIVED: UNITS
+  // ============================================================
+
+  const unitStats = useMemo(() => {
+    const total = units.length;
+    const active = units.filter(
+      (u) => (u.status || 'Active').toLowerCase() === 'active'
+    ).length;
+    const inactive = units.filter(
+      (u) => (u.status || '').toLowerCase() === 'inactive'
+    ).length;
+    const thisSemester = units.filter(
+      (u) => u.semester === (semesters[0]?.name || 'Semester 1')
+    ).length;
+    return { total, active, inactive, this_semester: thisSemester };
+  }, [units, semesters]);
+
+  const recentUnits = useMemo(
+    () =>
+      [...units]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        )
+        .slice(0, 5),
+    [units]
+  );
+
+  // ============================================================
+  // DERIVED: UNIT REGISTRATIONS
+  // ============================================================
+
+  const registrationStats = useMemo(() => {
+    const total = registrations.length;
+    const stats = {
+      total,
+      Pending: 0,
+      Registered: 0,
+      Approved: 0,
+      Dropped: 0,
+      Completed: 0,
+    };
+    registrations.forEach((r) => {
+      const status = r.status || 'Pending';
+      if (stats[status] !== undefined) stats[status] += 1;
+    });
+    // Normalized "active" = everything except dropped/rejected
+    stats.Active =
+      stats.Pending + stats.Registered + stats.Approved + stats.Completed;
+    return stats;
+  }, [registrations]);
+
+  const recentRegistrations = useMemo(
+    () =>
+      [...registrations]
+        .sort(
+          (a, b) =>
+            new Date(b.registrationDate || b.createdAt || 0) -
+            new Date(a.registrationDate || a.createdAt || 0)
+        )
+        .slice(0, 5),
+    [registrations]
+  );
+
+  // Registration trend per month
+  const registrationTrend = useMemo(() => {
+    const months = {};
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = d.toLocaleString('en-US', {
+        month: 'short',
+        year: 'numeric',
+      });
+      months[label] = 0;
+    }
+
+    registrations.forEach((r) => {
+      const dateStr = r.registrationDate || r.createdAt;
+      if (!dateStr) return;
+      const d = new Date(dateStr);
+      const label = d.toLocaleString('en-US', {
+        month: 'short',
+        year: 'numeric',
+      });
+      if (months[label] !== undefined) months[label] += 1;
+    });
+
+    return Object.entries(months).map(([month, count]) => ({ month, count }));
+  }, [registrations]);
+
+  // ============================================================
+  // DERIVED: RESULTS
+  // ============================================================
+
+  const resultStats = useMemo(() => {
+    const total = results.length;
+    const stats = {
+      total,
+      Pending: 0,
+      Published: 0,
+      Withheld: 0,
+      Incomplete: 0,
+      Draft: 0,
+    };
+    results.forEach((r) => {
+      const status = r.status || 'Pending';
+      if (stats[status] !== undefined) stats[status] += 1;
+    });
+    const studentsWithResults = new Set(
+      results.map((r) => r.studentId).filter(Boolean)
+    ).size;
+
+    // Compute average GPA across published results
+    const published = results.filter((r) => r.status === 'Published');
+    const gpas = published.map((r) => parseFloat(r.gradePoint)).filter((g) => !isNaN(g));
+    const averageGpa =
+      gpas.length > 0 ? gpas.reduce((a, b) => a + b, 0) / gpas.length : 0;
+    const highestGpa = gpas.length > 0 ? Math.max(...gpas) : 0;
+
+    return {
+      ...stats,
+      students_with_results: studentsWithResults,
+      average_gpa: averageGpa,
+      highest_gpa: highestGpa,
+    };
+  }, [results]);
+
+  const gradeDistribution = useMemo(() => {
+    const counts = {};
+    results.forEach((r) => {
+      if (!r.grade) return;
+      if (String(r.status || '').toLowerCase() !== 'published') return;
+      counts[r.grade] = (counts[r.grade] || 0) + 1;
+    });
+    return Object.entries(counts)
+      .map(([grade, count]) => ({ grade, count }))
+      .sort((a, b) => {
+        const order = ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'E', 'F'];
+        return order.indexOf(a.grade) - order.indexOf(b.grade);
+      });
+  }, [results]);
+
+  // GPA trend per semester
+  const gpaTrend = useMemo(() => {
+    const bySem = {};
+    results
+      .filter((r) => String(r.status || '').toLowerCase() === 'published')
+      .forEach((r) => {
+        const gp = parseFloat(r.gradePoint);
+        if (isNaN(gp)) return;
+        const label = r.semester || '—';
+        if (!bySem[label]) bySem[label] = { totalPoints: 0, totalCredits: 0 };
+        const credits = parseFloat(r.creditHours) || 0;
+        bySem[label].totalPoints += gp * credits;
+        bySem[label].totalCredits += credits;
+      });
+    return Object.entries(bySem)
+      .filter(([, b]) => b.totalCredits > 0)
+      .map(([label, b]) => ({
+        semester: label,
+        gpa: parseFloat((b.totalPoints / b.totalCredits).toFixed(2)),
+      }));
+  }, [results]);
+
+  const recentResults = useMemo(
+    () =>
+      [...results]
+        .filter((r) => String(r.status || '').toLowerCase() === 'published')
+        .sort(
+          (a, b) =>
+            new Date(b.publishedAt || b.updatedAt || 0) -
+            new Date(a.publishedAt || a.updatedAt || 0)
+        )
+        .slice(0, 5),
+    [results]
+  );
+
+  // ============================================================
+  // DERIVED: USERS / STAFF
+  // ============================================================
+
+  const userStats = useMemo(() => {
+    const total = accounts.length;
+    const active = accounts.filter(
+      (a) => String(a.accountStatus || a.status || '').toLowerCase() === 'active'
+    ).length;
+    const inactive = accounts.filter(
+      (a) => String(a.accountStatus || a.status || '').toLowerCase() === 'inactive'
+    ).length;
+    return {
+      total,
+      students: students.length,
+      lecturers: lecturers.length,
+      staff: staff.length,
+      administrators: admins.length,
+      active,
+      inactive,
+    };
+  }, [accounts, students, lecturers, staff, admins]);
+
+  // ============================================================
+  // DERIVED: ACTIVITY FEED
+  // ============================================================
+
+  const recentActivity = useMemo(() => {
+    const events = [];
+
+    // Latest applications
+    applications.slice(0, 10).forEach((a) => {
+      events.push({
+        id: `app-${a.id}`,
+        activity: `Application ${a.status || 'submitted'}`,
+        details: `${a.applicationType || 'Application'} for ${
+          a.studentId || 'student'
+        }`,
+        user_name: a.studentName || 'Student',
+        created_at: a.submittedAt || a.createdAt,
+      });
+    });
+
+    // Latest registrations
+    registrations.slice(0, 10).forEach((r) => {
+      events.push({
+        id: `reg-${r.id}`,
+        activity: `Unit registration ${r.status || 'updated'}`,
+        details: `${r.unitCode || 'Unit'} for ${
+          r.studentName || r.studentId || 'student'
+        }`,
+        user_name: r.studentName || 'Student',
+        created_at: r.registrationDate || r.createdAt,
+      });
+    });
+
+    // Latest results
+    results.slice(0, 10).forEach((r) => {
+      events.push({
+        id: `res-${r.id}`,
+        activity: `Result ${r.status || 'updated'}`,
+        details: `${r.unitCode || 'Unit'} · ${r.grade || '—'}`,
+        user_name: r.studentName || r.studentId || 'Student',
+        created_at: r.publishedAt || r.updatedAt || r.createdAt,
+      });
+    });
+
+    // Sort by date desc and take top 10
+    return events
+      .filter((e) => e.created_at)
+      .sort(
+        (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+      )
+      .slice(0, 10);
+  }, [applications, registrations, results]);
+
+  // ============================================================
+  // DERIVED: ANNOUNCEMENTS
+  // ============================================================
+
+  const recentAnnouncements = useMemo(
+    () =>
+      [...announcements]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || b.created_at || 0) -
+            new Date(a.createdAt || a.created_at || 0)
+        )
+        .slice(0, 5),
+    [announcements]
+  );
+
+  // ============================================================
+  // DERIVED: CHART DATA
+  // ============================================================
+
   const appPieData = useMemo(() => {
-    if (!applicationStats) return [];
     const keys = [
       'Draft',
       'Submitted',
@@ -609,39 +936,39 @@ const Dashboard = () => {
       'Requires Correction',
     ];
     return keys
-      .map((key) => ({
-        name: key,
-        value: applicationStats[key] || 0,
-        key,
-      }))
+      .map((key) => ({ name: key, value: applicationStats[key] || 0, key }))
       .filter((d) => d.value > 0);
   }, [applicationStats]);
 
-  // Registration bar chart
   const regBarData = useMemo(() => {
-    if (!registrationStats) return [];
-    const keys = ['Pending', 'Registered', 'Dropped', 'Completed'];
+    const keys = ['Pending', 'Registered', 'Approved', 'Dropped', 'Completed'];
     return keys
-      .map((key) => ({
-        name: key,
-        value: registrationStats[key] || 0,
-        key,
-      }))
-      .filter((d) => d.value > 0 || true); // keep zeros for consistent axis
+      .map((key) => ({ name: key, value: registrationStats[key] || 0, key }))
+      .filter((d) => d.value > 0);
   }, [registrationStats]);
 
-  // Grade distribution bar chart
-  const gradeBarData = useMemo(() => {
-    if (!Array.isArray(gradeDistribution)) return [];
-    const order = ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'E', 'F'];
-    const map = new Map(gradeDistribution.map((g) => [g.grade, g.count]));
-    return order
-      .filter((g) => map.has(g))
-      .map((g) => ({ grade: g, count: map.get(g) || 0 }));
-  }, [gradeDistribution]);
+  const gradeBarData = useMemo(
+    () => gradeDistribution.map((g) => ({ grade: g.grade, count: g.count })),
+    [gradeDistribution]
+  );
+
+  // Academic period labels (for header)
+  const activeAcademicYear = useMemo(() => {
+    const active = academicYears.find(
+      (y) => (y.status || '').toLowerCase() === 'active'
+    );
+    return active?.name || academicYears[0]?.name || '2025/2026';
+  }, [academicYears]);
+
+  const activeSemester = useMemo(() => {
+    const active = semesters.find(
+      (s) => (s.status || '').toLowerCase() === 'active'
+    );
+    return active?.name || semesters[0]?.name || 'Semester 1';
+  }, [semesters]);
 
   // ============================================================
-  // LOADING STATE
+  // LOADING
   // ============================================================
 
   if (loading) {
@@ -677,10 +1004,11 @@ const Dashboard = () => {
   // RENDER
   // ============================================================
 
-  const academicYear =
-    admin?.academic_year || studentStats?.academic_year || '2024/2025';
-  const currentSemester =
-    admin?.current_semester || studentStats?.current_semester || 'Semester 1';
+  const adminDisplayName =
+    `${admin?.first_name || ''} ${admin?.last_name || ''}`.trim() ||
+    admin?.full_name ||
+    admin?.email ||
+    'Administrator';
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -698,7 +1026,7 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* ============================================================
-            1. ADMIN WELCOME HEADER
+            1. WELCOME HEADER
             ============================================================ */}
         <div
           className="rounded-2xl p-6 sm:p-8 text-white relative overflow-hidden"
@@ -725,17 +1053,16 @@ const Dashboard = () => {
                   Welcome to SkillNest Admin Dashboard
                 </h1>
                 <p className="text-sm text-white/80 mt-1">
-                  {admin?.full_name || admin?.name || 'Administrator'} ·{' '}
-                  {admin?.role || 'Administrator'}
+                  {adminDisplayName} · {admin?.role || 'Administrator'}
                 </p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-xs">
                   <span className="inline-flex items-center gap-1.5 text-white/80">
                     <Calendar className="w-3.5 h-3.5" />
-                    Academic Year: {academicYear}
+                    Academic Year: {activeAcademicYear}
                   </span>
                   <span className="inline-flex items-center gap-1.5 text-white/80">
                     <BookMarked className="w-3.5 h-3.5" />
-                    Current Semester: {currentSemester}
+                    Current Semester: {activeSemester}
                   </span>
                 </div>
               </div>
@@ -764,20 +1091,20 @@ const Dashboard = () => {
         </div>
 
         {/* ============================================================
-            2. MAIN STATISTICS CARDS
+            2. MAIN STATISTICS
             ============================================================ */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           <StatCard
             icon={GraduationCap}
             title="Total Students"
-            value={stats?.total_students ?? studentStats?.total ?? 0}
+            value={studentStats.total}
             description="Registered students"
             accent="brown"
           />
           <StatCard
             icon={CheckCircle}
             title="Active Students"
-            value={stats?.active_students ?? studentStats?.active ?? 0}
+            value={studentStats.active}
             description="Currently active"
             accent="emerald"
           />
@@ -785,9 +1112,7 @@ const Dashboard = () => {
             icon={FileText}
             title="Pending Applications"
             value={
-              stats?.pending_applications ??
-              applicationStats?.Submitted ??
-              0
+              applicationStats.Submitted + applicationStats['Under Review']
             }
             description="Awaiting review"
             accent="amber"
@@ -795,49 +1120,42 @@ const Dashboard = () => {
           <StatCard
             icon={BookOpen}
             title="Total Units"
-            value={stats?.total_units ?? unitStats?.total ?? 0}
+            value={unitStats.total}
             description="Academic units"
             accent="blue"
           />
           <StatCard
             icon={ClipboardList}
             title="Unit Registrations"
-            value={
-              stats?.total_registrations ?? registrationStats?.total ?? 0
-            }
+            value={registrationStats.total}
             description="All registrations"
             accent="purple"
           />
           <StatCard
             icon={Award}
             title="Published Results"
-            value={
-              stats?.published_results ?? resultStats?.Published ?? 0
-            }
+            value={resultStats.Published}
             description="Available to students"
             accent="emerald"
           />
           <StatCard
             icon={UserCog}
             title="Total Users"
-            value={stats?.total_users ?? userStats?.total ?? 0}
+            value={userStats.total}
             description="System accounts"
             accent="brown"
           />
           <StatCard
             icon={Users}
             title="Staff & Lecturers"
-            value={
-              stats?.total_staff ??
-              ((userStats?.lecturers || 0) + (userStats?.staff || 0))
-            }
+            value={userStats.lecturers + userStats.staff}
             description="Faculty & staff"
             accent="orange"
           />
         </div>
 
         {/* ============================================================
-            3 & 4 & 5. APPLICATIONS — Stats + Pie + Trend
+            3. APPLICATIONS — Overview + Pie + Trend
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -848,16 +1166,21 @@ const Dashboard = () => {
             onAction={() => navigate('/admin/applications')}
           />
 
-          {/* Mini stats */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 mb-5">
             {[
-              { label: 'Total', value: applicationStats?.total || 0, color: 'brown' },
-              { label: 'Draft', value: applicationStats?.Draft || 0, color: 'gray' },
-              { label: 'Submitted', value: applicationStats?.Submitted || 0, color: 'blue' },
-              { label: 'Under Review', value: applicationStats?.['Under Review'] || 0, color: 'amber' },
-              { label: 'Approved', value: applicationStats?.Approved || 0, color: 'emerald' },
-              { label: 'Rejected', value: applicationStats?.Rejected || 0, color: 'red' },
-              { label: 'Correction', value: applicationStats?.['Requires Correction'] || 0, color: 'orange' },
+              { label: 'Total', value: applicationStats.total },
+              { label: 'Draft', value: applicationStats.Draft },
+              { label: 'Submitted', value: applicationStats.Submitted },
+              {
+                label: 'Under Review',
+                value: applicationStats['Under Review'],
+              },
+              { label: 'Approved', value: applicationStats.Approved },
+              { label: 'Rejected', value: applicationStats.Rejected },
+              {
+                label: 'Correction',
+                value: applicationStats['Requires Correction'],
+              },
             ].map((s) => (
               <div
                 key={s.label}
@@ -873,9 +1196,7 @@ const Dashboard = () => {
             ))}
           </div>
 
-          {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Pie */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Application Status Distribution
@@ -922,12 +1243,11 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* Line — trend */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Application Submission Trend
               </p>
-              {applicationTrend.length === 0 ? (
+              {applicationTrend.every((t) => t.count === 0) ? (
                 <EmptyState
                   icon={LineIcon}
                   title="No historical trend data available."
@@ -969,7 +1289,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            15. RECENT APPLICATIONS
+            4. RECENT APPLICATIONS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1020,27 +1340,25 @@ const Dashboard = () => {
                         #{a.id || a.application_id}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {a.student_id || '—'}
+                        {a.studentId || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-900 max-w-[180px] truncate">
-                        {a.student_name ||
-                          `${a.first_name || ''} ${a.last_name || ''}`.trim() ||
-                          '—'}
+                        {a.student_name || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 max-w-[160px] truncate">
                         {a.program || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {a.application_type || '—'}
+                        {a.applicationType || a.type || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {a.academic_year || '—'}
+                        {a.academicYear || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
                         {a.semester || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {formatDate(a.submitted_at || a.created_at)}
+                        {formatDate(a.submittedAt || a.createdAt)}
                       </td>
                       <td className="px-5 py-3">
                         <StatusBadge
@@ -1066,10 +1384,9 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            6 & 7. STUDENT OVERVIEW + Bar Chart
+            5. STUDENT OVERVIEW
             ============================================================ */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Student stats */}
           <Card>
             <SectionHeader
               icon={GraduationCap}
@@ -1079,10 +1396,11 @@ const Dashboard = () => {
             />
             <div className="space-y-3">
               {[
-                { label: 'Total Students', value: studentStats?.total ?? stats?.total_students ?? 0 },
-                { label: 'Active', value: studentStats?.active ?? stats?.active_students ?? 0 },
-                { label: 'Inactive', value: studentStats?.inactive ?? 0 },
-                { label: 'New This Semester', value: studentStats?.new_students ?? 0 },
+                { label: 'Total Students', value: studentStats.total },
+                { label: 'Active', value: studentStats.active },
+                { label: 'Inactive', value: studentStats.inactive },
+                { label: 'Pending', value: studentStats.pending },
+                { label: 'New (90 days)', value: studentStats.new_students },
               ].map(({ label, value }) => (
                 <div
                   key={label}
@@ -1100,7 +1418,6 @@ const Dashboard = () => {
             </div>
           </Card>
 
-          {/* Students by program bar chart */}
           <div className="lg:col-span-2">
             <ChartCard
               icon={BarChart3}
@@ -1134,7 +1451,7 @@ const Dashboard = () => {
         </div>
 
         {/* ============================================================
-            18. RECENT STUDENTS
+            6. RECENT STUDENTS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1144,7 +1461,7 @@ const Dashboard = () => {
             action="View All"
             onAction={() => navigate('/admin/students')}
           />
-          {recentStudents.length === 0 ? (
+          {enrichedStudents.length === 0 ? (
             <EmptyState icon={Users} title="No students found." />
           ) : (
             <div className="overflow-x-auto -mx-5">
@@ -1170,40 +1487,49 @@ const Dashboard = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {recentStudents.map((s) => (
-                    <tr key={s.id} className="hover:bg-gray-50">
-                      <td
-                        className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
-                        style={{ color: BRAND.primary }}
-                      >
-                        {s.student_id || '—'}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-gray-900 max-w-[180px] truncate">
-                        {s.full_name || s.student_name || '—'}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-gray-600 max-w-[180px] truncate">
-                        {s.program || '—'}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-gray-600 max-w-[160px] truncate">
-                        {s.department || '—'}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {s.year_of_study ? `Year ${s.year_of_study}` : '—'}
-                      </td>
-                      <td className="px-5 py-3">
-                        <StatusBadge
-                          status={s.status || 'Active'}
-                          configMap={{
-                            Active: APPLICATION_STATUSES.Approved,
-                            Inactive: APPLICATION_STATUSES.Rejected,
-                          }}
-                        />
-                      </td>
-                      <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {formatDate(s.created_at)}
-                      </td>
-                    </tr>
-                  ))}
+                  {[...enrichedStudents]
+                    .sort(
+                      (a, b) =>
+                        new Date(b.createdAt || 0) -
+                        new Date(a.createdAt || 0)
+                    )
+                    .slice(0, 5)
+                    .map((s) => (
+                      <tr key={s.id} className="hover:bg-gray-50">
+                        <td
+                          className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
+                          style={{ color: BRAND.primary }}
+                        >
+                          {s.studentId || s.id || '—'}
+                        </td>
+                        <td className="px-5 py-3 text-sm text-gray-900 max-w-[180px] truncate">
+                          {s.full_name}
+                        </td>
+                        <td className="px-5 py-3 text-sm text-gray-600 max-w-[180px] truncate">
+                          {s.program || '—'}
+                        </td>
+                        <td className="px-5 py-3 text-sm text-gray-600 max-w-[160px] truncate">
+                          {s.department || '—'}
+                        </td>
+                        <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
+                          {s.yearOfStudy || '—'}
+                        </td>
+                        <td className="px-5 py-3">
+                          <StatusBadge
+                            status={s.accountStatus || s.status || 'Active'}
+                            configMap={{
+                              Active: APPLICATION_STATUSES.Approved,
+                              Pending: APPLICATION_STATUSES['Under Review'],
+                              Inactive: APPLICATION_STATUSES.Rejected,
+                              Rejected: APPLICATION_STATUSES.Rejected,
+                            }}
+                          />
+                        </td>
+                        <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
+                          {formatDate(s.createdAt)}
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -1211,7 +1537,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            8. UNIT OVERVIEW
+            7. UNITS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1222,16 +1548,12 @@ const Dashboard = () => {
             onAction={() => navigate('/admin/units')}
           />
 
-          {/* Mini stats */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
             {[
-              { label: 'Total Units', value: unitStats?.total || 0 },
-              { label: 'Active', value: unitStats?.active || 0 },
-              { label: 'Inactive', value: unitStats?.inactive || 0 },
-              {
-                label: 'This Semester',
-                value: unitStats?.this_semester || 0,
-              },
+              { label: 'Total Units', value: unitStats.total },
+              { label: 'Active', value: unitStats.active },
+              { label: 'Inactive', value: unitStats.inactive },
+              { label: 'This Semester', value: unitStats.this_semester },
             ].map((s) => (
               <div
                 key={s.label}
@@ -1247,7 +1569,6 @@ const Dashboard = () => {
             ))}
           </div>
 
-          {/* Recent units */}
           {recentUnits.length === 0 ? (
             <EmptyState icon={BookOpen} title="No units found." />
           ) : (
@@ -1281,13 +1602,13 @@ const Dashboard = () => {
                         className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
                         style={{ color: BRAND.primary }}
                       >
-                        {u.unit_code || '—'}
+                        {u.unitCode || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-900 max-w-[220px] truncate">
-                        {u.unit_name || '—'}
+                        {u.unitName || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {u.credit_hours || '—'}
+                        {u.creditHours || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 max-w-[160px] truncate">
                         {u.department || '—'}
@@ -1319,7 +1640,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            9, 10, 11. UNIT REGISTRATION
+            8. UNIT REGISTRATION
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1330,14 +1651,13 @@ const Dashboard = () => {
             onAction={() => navigate('/admin/unit-registration')}
           />
 
-          {/* Mini stats */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-5">
             {[
-              { label: 'Total', value: registrationStats?.total || 0 },
-              { label: 'Pending', value: registrationStats?.Pending || 0 },
-              { label: 'Registered', value: registrationStats?.Registered || 0 },
-              { label: 'Dropped', value: registrationStats?.Dropped || 0 },
-              { label: 'Completed', value: registrationStats?.Completed || 0 },
+              { label: 'Total', value: registrationStats.total },
+              { label: 'Pending', value: registrationStats.Pending },
+              { label: 'Registered', value: registrationStats.Registered },
+              { label: 'Dropped', value: registrationStats.Dropped },
+              { label: 'Completed', value: registrationStats.Completed },
             ].map((s) => (
               <div
                 key={s.label}
@@ -1353,9 +1673,7 @@ const Dashboard = () => {
             ))}
           </div>
 
-          {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Bar: Registration Status */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Unit Registration Status
@@ -1397,12 +1715,11 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* Line: Registration Trend */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Unit Registration Trend
               </p>
-              {registrationTrend.length === 0 ? (
+              {registrationTrend.every((t) => t.count === 0) ? (
                 <EmptyState
                   icon={LineIcon}
                   title="No historical registration data available."
@@ -1444,7 +1761,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            16. RECENT UNIT REGISTRATIONS
+            9. RECENT REGISTRATIONS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1489,34 +1806,34 @@ const Dashboard = () => {
                         className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
                         style={{ color: BRAND.primary }}
                       >
-                        #{r.id || r.registration_id}
+                        #{r.id}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {r.student_id || '—'}
+                        {r.studentId || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-900 max-w-[180px] truncate">
-                        {r.student_name || '—'}
+                        {r.studentName || '—'}
                       </td>
                       <td
                         className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
                         style={{ color: BRAND.primary }}
                       >
-                        {r.unit_code || '—'}
+                        {r.unitCode || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 max-w-[220px] truncate">
-                        {r.unit_name || '—'}
+                        {r.unitName || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {r.credit_hours || '—'}
+                        {r.creditHours || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
                         {r.semester || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {r.academic_year || '—'}
+                        {r.academicYear || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {formatDate(r.registration_date || r.created_at)}
+                        {formatDate(r.registrationDate || r.createdAt)}
                       </td>
                       <td className="px-5 py-3">
                         <StatusBadge
@@ -1533,7 +1850,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            12, 13, 14. MARKS & RESULTS
+            10. MARKS & RESULTS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1544,25 +1861,24 @@ const Dashboard = () => {
             onAction={() => navigate('/admin/marks')}
           />
 
-          {/* Stats */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-5">
             {[
-              { label: 'Total Results', value: resultStats?.total || 0 },
-              { label: 'Pending', value: resultStats?.Pending || 0 },
-              { label: 'Published', value: resultStats?.Published || 0 },
-              { label: 'Withheld', value: resultStats?.Withheld || 0 },
-              { label: 'Incomplete', value: resultStats?.Incomplete || 0 },
+              { label: 'Total Results', value: resultStats.total },
+              { label: 'Pending', value: resultStats.Pending },
+              { label: 'Published', value: resultStats.Published },
+              { label: 'Withheld', value: resultStats.Withheld },
+              { label: 'Incomplete', value: resultStats.Incomplete },
               {
                 label: 'Students with Results',
-                value: resultStats?.students_with_results || 0,
+                value: resultStats.students_with_results,
               },
               {
                 label: 'Average GPA',
-                value: formatNumber(resultStats?.average_gpa),
+                value: formatNumber(resultStats.average_gpa),
               },
               {
                 label: 'Highest GPA',
-                value: formatNumber(resultStats?.highest_gpa),
+                value: formatNumber(resultStats.highest_gpa),
               },
             ].map((s) => (
               <div
@@ -1579,9 +1895,7 @@ const Dashboard = () => {
             ))}
           </div>
 
-          {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Grade Distribution Bar Chart */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Grade Distribution
@@ -1617,7 +1931,6 @@ const Dashboard = () => {
               )}
             </div>
 
-            {/* GPA Trend Line Chart */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
                 Average GPA by Semester
@@ -1664,7 +1977,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            17. RECENT RESULTS
+            11. RECENT RESULTS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1708,28 +2021,28 @@ const Dashboard = () => {
                         className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
                         style={{ color: BRAND.primary }}
                       >
-                        {r.student_id || '—'}
+                        {r.studentId || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-900 max-w-[180px] truncate">
-                        {r.student_name || '—'}
+                        {r.studentName || '—'}
                       </td>
                       <td
                         className="px-5 py-3 text-sm font-semibold whitespace-nowrap"
                         style={{ color: BRAND.primary }}
                       >
-                        {r.unit_code || '—'}
+                        {r.unitCode || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 max-w-[220px] truncate">
-                        {r.unit_name || '—'}
+                        {r.unitName || '—'}
                       </td>
                       <td className="px-5 py-3 text-sm font-semibold text-gray-900 whitespace-nowrap">
-                        {formatNumber(r.total_marks, 1)}
+                        {formatNumber(r.totalMarks, 1)}
                       </td>
                       <td className="px-5 py-3">
                         <GradeBadge grade={r.grade} />
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
-                        {formatNumber(r.grade_point, 1)}
+                        {formatNumber(r.gradePoint, 1)}
                       </td>
                       <td className="px-5 py-3 text-sm text-gray-600 whitespace-nowrap">
                         {r.semester || '—'}
@@ -1749,7 +2062,7 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            19. USERS & STAFF SUMMARY
+            12. USERS & STAFF
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1761,13 +2074,13 @@ const Dashboard = () => {
           />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
             {[
-              { label: 'Total Users', value: userStats?.total || 0 },
-              { label: 'Students', value: userStats?.students || 0 },
-              { label: 'Lecturers', value: userStats?.lecturers || 0 },
-              { label: 'Staff', value: userStats?.staff || 0 },
-              { label: 'Administrators', value: userStats?.administrators || 0 },
-              { label: 'Active', value: userStats?.active || 0 },
-              { label: 'Inactive', value: userStats?.inactive || 0 },
+              { label: 'Total Users', value: userStats.total },
+              { label: 'Students', value: userStats.students },
+              { label: 'Lecturers', value: userStats.lecturers },
+              { label: 'Staff', value: userStats.staff },
+              { label: 'Administrators', value: userStats.administrators },
+              { label: 'Active', value: userStats.active },
+              { label: 'Inactive', value: userStats.inactive },
             ].map((s) => (
               <div
                 key={s.label}
@@ -1785,10 +2098,9 @@ const Dashboard = () => {
         </Card>
 
         {/* ============================================================
-            20 & 21 & 22. ACTIVITY + ANNOUNCEMENTS + QUICK ACTIONS
+            13. ACTIVITY + QUICK ACTIONS
             ============================================================ */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Recent Activity */}
           <div className="lg:col-span-2">
             <Card>
               <SectionHeader
@@ -1800,7 +2112,7 @@ const Dashboard = () => {
                 <EmptyState icon={Activity} title="No recent activity." />
               ) : (
                 <div className="space-y-2 max-h-96 overflow-y-auto -mx-5">
-                  {recentActivity.slice(0, 10).map((a) => (
+                  {recentActivity.map((a) => (
                     <div
                       key={a.id}
                       className="px-5 py-3 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors"
@@ -1817,7 +2129,7 @@ const Dashboard = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900">
-                            {a.activity || a.action || 'Activity'}
+                            {a.activity}
                           </p>
                           {a.details && (
                             <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
@@ -1845,7 +2157,6 @@ const Dashboard = () => {
             </Card>
           </div>
 
-          {/* Quick Actions */}
           <Card>
             <SectionHeader
               icon={LayoutDashboard}
@@ -1917,7 +2228,7 @@ const Dashboard = () => {
         </div>
 
         {/* ============================================================
-            21. ANNOUNCEMENTS
+            14. ANNOUNCEMENTS
             ============================================================ */}
         <Card>
           <SectionHeader
@@ -1927,11 +2238,11 @@ const Dashboard = () => {
             action="Manage in Settings"
             onAction={() => navigate('/admin/settings')}
           />
-          {announcements.length === 0 ? (
+          {recentAnnouncements.length === 0 ? (
             <EmptyState icon={Megaphone} title="No announcements." />
           ) : (
             <div className="space-y-3">
-              {announcements.map((a) => (
+              {recentAnnouncements.map((a) => (
                 <div
                   key={a.id}
                   className="p-4 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
@@ -1942,7 +2253,7 @@ const Dashboard = () => {
                         {a.title}
                       </h4>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {formatDate(a.created_at)}
+                        {formatDate(a.createdAt || a.created_at)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">

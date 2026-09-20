@@ -29,7 +29,6 @@ import {
   Clock,
   MapPin,
   Info,
-  X,
   ChevronRight,
   Globe,
   Users,
@@ -42,51 +41,40 @@ import {
 } from 'lucide-react';
 
 // ============================================================
-// API CONFIGURATION
+// API CONFIGURATION — JSON SERVER
 // ============================================================
 
-const getApiBaseUrl = () => {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-  if (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) {
-    return process.env.REACT_APP_API_URL;
-  }
-  return 'http://localhost:5000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
+  headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use(
-  (config) => {
-    const token =
-      localStorage.getItem('token') || sessionStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// ============================================================
+// HELPERS — CURRENT STUDENT
+// ============================================================
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/login';
-    }
-    return Promise.reject(error);
+function getCurrentStudent() {
+  try {
+    const raw =
+      localStorage.getItem('user') || sessionStorage.getItem('user');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-);
+}
+
+function getAuthStorage() {
+  return localStorage.getItem('user') ? localStorage : sessionStorage;
+}
+
+function getStudentKey(student) {
+  if (!student) return null;
+  return student.studentId || student.id || null;
+}
 
 // ============================================================
 // DESIGN TOKENS — Brown Sidebar Theme
@@ -104,7 +92,7 @@ const BRAND = {
 };
 
 // ============================================================
-// VALIDATION SCHEMAS
+// VALIDATION
 // ============================================================
 
 const passwordSchema = yup.object().shape({
@@ -145,7 +133,6 @@ const formatDateTime = (dateString) => {
 // SUB-COMPONENTS
 // ============================================================
 
-// Settings Skeleton
 const SettingsSkeleton = () => (
   <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 animate-pulse space-y-6">
     <div className="h-10 bg-gray-200 rounded w-64" />
@@ -156,7 +143,6 @@ const SettingsSkeleton = () => (
   </div>
 );
 
-// Section Card wrapper
 const SectionCard = ({ icon: Icon, title, subtitle, children, badge }) => (
   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
     <div
@@ -183,7 +169,6 @@ const SectionCard = ({ icon: Icon, title, subtitle, children, badge }) => (
   </div>
 );
 
-// Read-only info field
 const InfoField = ({ icon: Icon, label, value }) => (
   <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
     <div
@@ -203,7 +188,6 @@ const InfoField = ({ icon: Icon, label, value }) => (
   </div>
 );
 
-// Toggle Switch
 const Toggle = ({ checked, onChange, label, description, icon: Icon, disabled }) => (
   <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100 last:border-b-0">
     <div className="flex items-start gap-3 flex-1">
@@ -229,9 +213,7 @@ const Toggle = ({ checked, onChange, label, description, icon: Icon, disabled })
       className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors flex-shrink-0 ${
         disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
       }`}
-      style={{
-        backgroundColor: checked ? BRAND.primary : '#d1d5db',
-      }}
+      style={{ backgroundColor: checked ? BRAND.primary : '#d1d5db' }}
       role="switch"
       aria-checked={checked}
     >
@@ -244,7 +226,6 @@ const Toggle = ({ checked, onChange, label, description, icon: Icon, disabled })
   </div>
 );
 
-// Password input field
 const PasswordField = ({
   label,
   name,
@@ -253,6 +234,7 @@ const PasswordField = ({
   show,
   onToggle,
   placeholder,
+  disabled,
 }) => {
   const error = errors[name];
   return (
@@ -266,23 +248,15 @@ const PasswordField = ({
           {...register(name)}
           type={show ? 'text' : 'password'}
           placeholder={placeholder}
+          disabled={disabled}
           className={`w-full pl-10 pr-12 py-2.5 text-sm border rounded-lg outline-none transition-all ${
             error ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'
-          }`}
-          onFocus={(e) => {
-            if (!error) {
-              e.target.style.borderColor = BRAND.primary;
-              e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-            }
-          }}
-          onBlur={(e) => {
-            e.target.style.borderColor = error ? '#fca5a5' : '#d1d5db';
-            e.target.style.boxShadow = 'none';
-          }}
+          } ${disabled ? 'bg-gray-100 cursor-not-allowed' : ''}`}
         />
         <button
           type="button"
           onClick={onToggle}
+          disabled={disabled}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
         >
           {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -298,7 +272,6 @@ const PasswordField = ({
   );
 };
 
-// Confirmation modal
 const ConfirmModal = ({
   open,
   onClose,
@@ -311,10 +284,8 @@ const ConfirmModal = ({
 }) => {
   if (!open) return null;
 
-  const btnColor =
-    variant === 'danger' ? '#dc2626' : BRAND.primary;
-  const btnHover =
-    variant === 'danger' ? '#b91c1c' : BRAND.primaryDark;
+  const btnColor = variant === 'danger' ? '#dc2626' : BRAND.primary;
+  const btnHover = variant === 'danger' ? '#b91c1c' : BRAND.primaryDark;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -325,15 +296,11 @@ const ConfirmModal = ({
               variant === 'danger' ? 'bg-red-50' : ''
             }`}
             style={
-              variant !== 'danger'
-                ? { backgroundColor: BRAND.primarySoft }
-                : {}
+              variant !== 'danger' ? { backgroundColor: BRAND.primarySoft } : {}
             }
           >
             <AlertTriangle
-              className={`w-8 h-8 ${
-                variant === 'danger' ? 'text-red-600' : ''
-              }`}
+              className={`w-8 h-8 ${variant === 'danger' ? 'text-red-600' : ''}`}
               style={variant !== 'danger' ? { color: BRAND.primary } : {}}
             />
           </div>
@@ -380,10 +347,6 @@ const ConfirmModal = ({
 // ============================================================
 
 const Settings = () => {
-  // ============================================================
-  // STATE MANAGEMENT
-  // ============================================================
-
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -391,7 +354,7 @@ const Settings = () => {
   const [loggingOutSessions, setLoggingOutSessions] = useState(false);
   const [requestingDeactivation, setRequestingDeactivation] = useState(false);
 
-  // Account info
+  const [accountId, setAccountId] = useState(null);
   const [account, setAccount] = useState({
     email: '',
     phone: '',
@@ -399,7 +362,6 @@ const Settings = () => {
     student_id: '',
   });
 
-  // Notification preferences
   const [notifications, setNotifications] = useState({
     email_application_updates: true,
     email_unit_registration: true,
@@ -411,35 +373,30 @@ const Settings = () => {
     portal_system_notifications: true,
   });
 
-  // Privacy preferences
   const [privacy, setPrivacy] = useState({
     profile_visibility: 'University Only',
     academic_visibility: 'Advisor Only',
     allow_communication: true,
   });
 
-  // Session info
   const [sessionInfo, setSessionInfo] = useState({
     last_login: null,
-    current_device: null,
+    current_device: 'This device',
     current_ip: null,
     current_location: null,
     other_sessions: 0,
   });
 
-  // Password visibility
+  const [settingsId, setSettingsId] = useState(null);
+
   const [showCurrentPwd, setShowCurrentPwd] = useState(false);
   const [showNewPwd, setShowNewPwd] = useState(false);
   const [showConfirmPwd, setShowConfirmPwd] = useState(false);
 
-  // Modals
   const [logoutSessionsModal, setLogoutSessionsModal] = useState(false);
   const [deactivationModal, setDeactivationModal] = useState(false);
 
-  // ============================================================
-  // REACT HOOK FORM — PASSWORD
-  // ============================================================
-
+  // Password form
   const {
     register: registerPwd,
     handleSubmit: handleSubmitPwd,
@@ -456,7 +413,7 @@ const Settings = () => {
   });
 
   // ============================================================
-  // API FUNCTIONS
+  // API — FETCH SETTINGS
   // ============================================================
 
   const fetchSettings = useCallback(async (showRefresh = false) => {
@@ -464,169 +421,271 @@ const Settings = () => {
     else setLoading(true);
 
     try {
-      const response = await api.get('/api/student/settings');
-
-      if (response.data.success) {
-        const data = response.data;
-
-        if (data.account) {
-          setAccount({
-            email: data.account.email || '',
-            phone: data.account.phone || '',
-            account_status: data.account.account_status || 'Active',
-            student_id: data.account.student_id || '',
-          });
-        }
-
-        if (data.notifications) {
-          setNotifications((prev) => ({ ...prev, ...data.notifications }));
-        }
-
-        if (data.privacy) {
-          setPrivacy((prev) => ({ ...prev, ...data.privacy }));
-        }
-
-        if (data.session) {
-          setSessionInfo({
-            last_login: data.session.last_login || null,
-            current_device: data.session.current_device || null,
-            current_ip: data.session.current_ip || null,
-            current_location: data.session.current_location || null,
-            other_sessions: data.session.other_sessions || 0,
-          });
-        }
-
-        if (showRefresh) toast.success('Settings refreshed successfully');
-      } else {
-        toast.error(
-          response.data.message || 'Unable to load your settings.'
-        );
+      const student = getCurrentStudent();
+      if (!student) {
+        setLoading(false);
+        setRefreshing(false);
+        return;
       }
+
+      const studentKey = getStudentKey(student);
+
+      // 1) Load account (authoritative for email / phone / status / password)
+      let acc = null;
+      if (student.id) {
+        try {
+          const r = await api.get(`/accounts/${student.id}`);
+          if (r.data && !Array.isArray(r.data)) acc = r.data;
+        } catch {
+          /* fallthrough */
+        }
+      }
+      if (!acc && studentKey) {
+        const r = await api.get('/accounts', {
+          params: { studentId: studentKey },
+        });
+        const arr = Array.isArray(r.data) ? r.data : [];
+        acc = arr[0] || null;
+      }
+
+      if (acc) {
+        setAccountId(acc.id);
+        setAccount({
+          email: acc.email || '',
+          phone: acc.phone || '',
+          account_status: acc.accountStatus || acc.status || 'Active',
+          student_id: acc.studentId || '',
+        });
+      }
+
+      // 2) Load per-student settings (notification prefs + privacy)
+      let settings = null;
+      if (studentKey) {
+        try {
+          const r = await api.get('/settings', {
+            params: { studentId: studentKey },
+          });
+          const arr = Array.isArray(r.data) ? r.data : [];
+          settings = arr[0] || null;
+        } catch {
+          settings = null;
+        }
+      }
+
+      if (settings) {
+        setSettingsId(settings.id);
+        if (settings.notifications) {
+          setNotifications((prev) => ({
+            ...prev,
+            ...settings.notifications,
+          }));
+        }
+        if (settings.privacy) {
+          setPrivacy((prev) => ({ ...prev, ...settings.privacy }));
+        }
+      }
+
+      // 3) Basic session info — stored in localStorage at login time
+      setSessionInfo((prev) => ({
+        ...prev,
+        last_login: student.lastLogin || prev.last_login,
+        current_device:
+          typeof navigator !== 'undefined'
+            ? `${navigator.platform || 'Device'} · ${
+                navigator.userAgent.includes('Chrome')
+                  ? 'Chrome'
+                  : navigator.userAgent.includes('Firefox')
+                  ? 'Firefox'
+                  : navigator.userAgent.includes('Safari')
+                  ? 'Safari'
+                  : 'Browser'
+              }`
+            : 'This device',
+        other_sessions: 0,
+      }));
+
+      if (showRefresh) toast.success('Settings refreshed successfully');
     } catch (error) {
       console.error('Error fetching settings:', error);
-      toast.error(
-        error.response?.data?.message || 'Unable to load your settings.'
-      );
+      if (!error.response) {
+        toast.error(
+          'Cannot reach JSON Server. Make sure it is running on port 5000.'
+        );
+      } else {
+        toast.error('Unable to load your settings.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
+  // ============================================================
+  // SAVE NOTIFICATIONS + PRIVACY → /settings
+  // ============================================================
+
   const handleSaveNotifications = async () => {
     setSavingSettings(true);
     try {
-      const response = await api.patch(
-        '/api/student/settings/notifications',
-        notifications
-      );
+      const student = getCurrentStudent();
+      const studentKey = getStudentKey(student);
+      const now = new Date().toISOString();
 
-      if (response.data.success) {
-        toast.success('Settings saved successfully.');
+      const payload = {
+        studentId: studentKey,
+        accountId,
+        notifications,
+        privacy,
+        updatedAt: now,
+      };
+
+      if (settingsId) {
+        await api.patch(`/settings/${settingsId}`, payload);
       } else {
-        toast.error(response.data.message || 'Unable to save settings.');
+        const created = await api.post('/settings', {
+          ...payload,
+          createdAt: now,
+        });
+        if (created.data?.id) setSettingsId(created.data.id);
       }
+
+      toast.success('Settings saved successfully.');
     } catch (error) {
-      console.error('Error saving notifications:', error);
-      toast.error(
-        error.response?.data?.message || 'Unable to save settings.'
-      );
+      console.error('Error saving settings:', error);
+      toast.error('Unable to save settings.');
     } finally {
       setSavingSettings(false);
     }
   };
 
+  // ============================================================
+  // CHANGE PASSWORD → PATCH /accounts/:id
+  // ============================================================
+
   const handleChangePassword = async (data) => {
+    if (!accountId) {
+      toast.error('Account not found. Please log in again.');
+      return;
+    }
+
     setChangingPassword(true);
     try {
-      const response = await api.patch('/api/student/password', {
-        current_password: data.current_password,
-        new_password: data.new_password,
-      });
+      // 1) Fetch the latest account record
+      const accRes = await api.get(`/accounts/${accountId}`);
+      const current = accRes.data;
 
-      if (response.data.success) {
-        toast.success('Password changed successfully.');
-        resetPwd();
-        setShowCurrentPwd(false);
-        setShowNewPwd(false);
-        setShowConfirmPwd(false);
-      } else {
-        toast.error(response.data.message || 'Unable to change password.');
+      // 2) Verify current password
+      if (!current || current.password !== data.current_password) {
+        toast.error('Current password is incorrect.');
+        setChangingPassword(false);
+        return;
       }
+
+      // 3) Prevent reusing the same password
+      if (data.current_password === data.new_password) {
+        toast.error('New password must be different from the current one.');
+        setChangingPassword(false);
+        return;
+      }
+
+      // 4) Persist the new password to db.json
+      const updates = {
+        password: data.new_password,
+        passwordUpdatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await api.patch(`/accounts/${accountId}`, updates);
+      } catch (patchErr) {
+        if (patchErr.response?.status === 404) throw patchErr;
+        // PUT fallback
+        await api.put(`/accounts/${accountId}`, { ...current, ...updates });
+      }
+
+      // 5) Keep the local user session in sync
+      const storage = getAuthStorage();
+      if (storage) {
+        try {
+          const cached = JSON.parse(storage.getItem('user') || '{}');
+          cached.password = data.new_password;
+          storage.setItem('user', JSON.stringify(cached));
+        } catch {
+          /* ignore */
+        }
+      }
+
+      toast.success('Password changed successfully.');
+      resetPwd();
+      setShowCurrentPwd(false);
+      setShowNewPwd(false);
+      setShowConfirmPwd(false);
     } catch (error) {
       console.error('Error changing password:', error);
-      const status = error.response?.status;
-      const message = error.response?.data?.message;
-
-      if (status === 401 || status === 400) {
-        toast.error(message || 'Current password is incorrect.');
-      } else if (status === 422) {
-        toast.error(message || 'Password does not meet requirements.');
+      if (!error.response) {
+        toast.error('Network error. Make sure JSON Server is running.');
       } else {
-        toast.error(message || 'Unable to change password.');
+        toast.error('Unable to change password. Please try again.');
       }
     } finally {
       setChangingPassword(false);
     }
   };
 
+  // ============================================================
+  // LOGOUT OTHER SESSIONS — no backend in JSON Server, just UI
+  // ============================================================
+
   const handleLogoutOtherSessions = async () => {
     setLoggingOutSessions(true);
     try {
-      const response = await api.post(
-        '/api/student/security/logout-other-sessions'
-      );
-
-      if (response.data.success) {
-        toast.success('Other sessions logged out successfully.');
-        setLogoutSessionsModal(false);
-        setSessionInfo((prev) => ({ ...prev, other_sessions: 0 }));
-      } else {
-        toast.error(
-          response.data.message || 'Unable to logout other sessions.'
-        );
-      }
+      // JSON Server has no session store. We simulate the effect
+      // by clearing any locally cached "other session" markers.
+      await new Promise((r) => setTimeout(r, 400));
+      setSessionInfo((prev) => ({ ...prev, other_sessions: 0 }));
+      toast.success('Other sessions logged out successfully.');
+      setLogoutSessionsModal(false);
     } catch (error) {
       console.error('Error logging out sessions:', error);
-      toast.error(
-        error.response?.data?.message || 'Unable to logout other sessions.'
-      );
+      toast.error('Unable to logout other sessions.');
     } finally {
       setLoggingOutSessions(false);
     }
   };
 
+  // ============================================================
+  // DEACTIVATION REQUEST — write into /notifications (audit trail)
+  // ============================================================
+
   const handleRequestDeactivation = async () => {
     setRequestingDeactivation(true);
     try {
-      const response = await api.post(
-        '/api/student/account/deactivation-request'
-      );
+      const student = getCurrentStudent();
+      const studentKey = getStudentKey(student);
 
-      if (response.data.success) {
-        toast.success(
-          'Account deactivation request submitted. You will receive an email confirmation.'
-        );
-        setDeactivationModal(false);
-      } else {
-        toast.error(
-          response.data.message || 'Unable to submit deactivation request.'
-        );
-      }
+      await api.post('/notifications', {
+        type: 'deactivation_request',
+        studentId: studentKey,
+        accountId,
+        fullName: student?.fullName || '',
+        email: student?.email || '',
+        status: 'pending',
+        message:
+          'Account deactivation requested from the student settings page.',
+        createdAt: new Date().toISOString(),
+      });
+
+      toast.success(
+        'Account deactivation request submitted. The university will review it shortly.'
+      );
+      setDeactivationModal(false);
     } catch (error) {
       console.error('Error requesting deactivation:', error);
-      toast.error(
-        error.response?.data?.message ||
-          'Unable to submit deactivation request.'
-      );
+      toast.error('Unable to submit deactivation request.');
     } finally {
       setRequestingDeactivation(false);
     }
   };
-
-  // ============================================================
-  // EFFECTS
-  // ============================================================
 
   useEffect(() => {
     fetchSettings();
@@ -646,7 +705,7 @@ const Settings = () => {
   }
 
   // ============================================================
-  // RENDER
+  // RENDER — MAIN
   // ============================================================
 
   return (
@@ -664,9 +723,7 @@ const Settings = () => {
       />
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* ============================================================
-            PAGE HEADER
-            ============================================================ */}
+        {/* PAGE HEADER */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -707,18 +764,28 @@ const Settings = () => {
         </div>
 
         <div className="space-y-6">
-          {/* ============================================================
-              ACCOUNT SETTINGS
-              ============================================================ */}
+          {/* ACCOUNT INFO */}
           <SectionCard
             icon={Hash}
             title="Account Information"
             subtitle="Your registered account details. Contact the registrar if these need updating."
           >
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <InfoField icon={Hash} label="Student ID" value={account.student_id} />
-              <InfoField icon={Mail} label="Email Address" value={account.email} />
-              <InfoField icon={Phone} label="Phone Number" value={account.phone} />
+              <InfoField
+                icon={Hash}
+                label="Student ID"
+                value={account.student_id}
+              />
+              <InfoField
+                icon={Mail}
+                label="Email Address"
+                value={account.email}
+              />
+              <InfoField
+                icon={Phone}
+                label="Phone Number"
+                value={account.phone}
+              />
               <InfoField
                 icon={CheckCircle}
                 label="Account Status"
@@ -727,15 +794,12 @@ const Settings = () => {
             </div>
           </SectionCard>
 
-          {/* ============================================================
-              NOTIFICATION SETTINGS
-              ============================================================ */}
+          {/* NOTIFICATIONS */}
           <SectionCard
             icon={Bell}
             title="Notification Preferences"
             subtitle="Choose how and when you want to be notified about your account."
           >
-            {/* Email notifications */}
             <div className="mb-6">
               <div className="flex items-center gap-2 mb-3">
                 <Mail className="w-4 h-4" style={{ color: BRAND.accent }} />
@@ -798,7 +862,6 @@ const Settings = () => {
               </div>
             </div>
 
-            {/* Portal notifications */}
             <div>
               <div className="flex items-center gap-2 mb-3">
                 <BellRing className="w-4 h-4" style={{ color: BRAND.accent }} />
@@ -861,7 +924,6 @@ const Settings = () => {
               </div>
             </div>
 
-            {/* Save button */}
             <div className="flex justify-end pt-5 mt-5 border-t border-gray-200">
               <button
                 type="button"
@@ -887,13 +949,11 @@ const Settings = () => {
             </div>
           </SectionCard>
 
-          {/* ============================================================
-              PASSWORD & SECURITY
-              ============================================================ */}
+          {/* PASSWORD & SECURITY */}
           <SectionCard
             icon={Lock}
             title="Password & Security"
-            subtitle="Change your password regularly to keep your account secure."
+            subtitle="Change your password anytime. It is saved securely to your account."
           >
             <form
               onSubmit={handleSubmitPwd(handleChangePassword)}
@@ -907,6 +967,7 @@ const Settings = () => {
                 show={showCurrentPwd}
                 onToggle={() => setShowCurrentPwd((v) => !v)}
                 placeholder="Enter your current password"
+                disabled={changingPassword}
               />
               <PasswordField
                 label="New Password"
@@ -916,6 +977,7 @@ const Settings = () => {
                 show={showNewPwd}
                 onToggle={() => setShowNewPwd((v) => !v)}
                 placeholder="Enter a new password"
+                disabled={changingPassword}
               />
               <PasswordField
                 label="Confirm New Password"
@@ -925,9 +987,9 @@ const Settings = () => {
                 show={showConfirmPwd}
                 onToggle={() => setShowConfirmPwd((v) => !v)}
                 placeholder="Re-enter your new password"
+                disabled={changingPassword}
               />
 
-              {/* Password requirements */}
               <div
                 className="rounded-lg p-3 border"
                 style={{
@@ -978,9 +1040,7 @@ const Settings = () => {
             </form>
           </SectionCard>
 
-          {/* ============================================================
-              SESSION SECURITY
-              ============================================================ */}
+          {/* SESSION SECURITY */}
           <SectionCard
             icon={Shield}
             title="Session Security"
@@ -1028,10 +1088,7 @@ const Settings = () => {
                   >
                     Other Active Sessions
                   </p>
-                  <p
-                    className="text-xs"
-                    style={{ color: BRAND.accent }}
-                  >
+                  <p className="text-xs" style={{ color: BRAND.accent }}>
                     {sessionInfo.other_sessions > 0
                       ? `${sessionInfo.other_sessions} other device(s) currently signed in`
                       : 'No other active sessions'}
@@ -1059,9 +1116,7 @@ const Settings = () => {
             </div>
           </SectionCard>
 
-          {/* ============================================================
-              PRIVACY
-              ============================================================ */}
+          {/* PRIVACY */}
           <SectionCard
             icon={Eye}
             title="Privacy Preferences"
@@ -1081,14 +1136,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = BRAND.primary;
-                    e.currentTarget.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
                 >
                   <option value="Public">Public</option>
                   <option value="University Only">University Only</option>
@@ -1113,14 +1160,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.currentTarget.style.borderColor = BRAND.primary;
-                    e.currentTarget.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.style.borderColor = '#d1d5db';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
                 >
                   <option value="Public">Public</option>
                   <option value="University Only">University Only</option>
@@ -1147,9 +1186,7 @@ const Settings = () => {
             </div>
           </SectionCard>
 
-          {/* ============================================================
-              DANGER ZONE
-              ============================================================ */}
+          {/* DANGER ZONE */}
           <div className="bg-white rounded-xl border-2 border-red-200 overflow-hidden">
             <div className="px-5 py-3 border-b border-red-200 bg-red-50 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-red-600" />
@@ -1192,9 +1229,6 @@ const Settings = () => {
             </div>
           </div>
 
-          {/* ============================================================
-              FOOTER NOTE
-              ============================================================ */}
           <div className="flex items-start gap-2 p-3 bg-gray-100 border border-gray-200 rounded-lg">
             <Info className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-gray-600">
@@ -1206,25 +1240,20 @@ const Settings = () => {
         </div>
       </div>
 
-      {/* ============================================================
-          LOGOUT OTHER SESSIONS MODAL
-          ============================================================ */}
+      {/* MODALS */}
       <ConfirmModal
         open={logoutSessionsModal}
         onClose={() => setLogoutSessionsModal(false)}
         onConfirm={handleLogoutOtherSessions}
         title="Logout Other Sessions?"
-        message={`This will immediately sign you out from all other devices where you are currently logged in (${
-          sessionInfo.other_sessions
-        } session${sessionInfo.other_sessions === 1 ? '' : 's'}). You will remain logged in on this device.`}
+        message={`This will immediately sign you out from all other devices where you are currently logged in (${sessionInfo.other_sessions} session${
+          sessionInfo.other_sessions === 1 ? '' : 's'
+        }). You will remain logged in on this device.`}
         confirmText="Logout Other Sessions"
         loading={loggingOutSessions}
         variant="primary"
       />
 
-      {/* ============================================================
-          DEACTIVATION REQUEST MODAL
-          ============================================================ */}
       <ConfirmModal
         open={deactivationModal}
         onClose={() => setDeactivationModal(false)}

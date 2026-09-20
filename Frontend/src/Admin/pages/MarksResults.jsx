@@ -23,7 +23,6 @@ import {
   XCircle,
   Clock,
   AlertCircle,
-  AlertTriangle,
   Award,
   FileText,
   Hash,
@@ -42,50 +41,20 @@ import {
   FileWarning,
   Percent,
   Target,
+  Trash2,
 } from 'lucide-react';
 
 // ============================================================
-// API CONFIGURATION
+// API CONFIGURATION — JSON SERVER
 // ============================================================
 
-const getApiBaseUrl = () => {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-  if (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) {
-    return process.env.REACT_APP_API_URL;
-  }
-  return 'http://localhost:5000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
-
-api.interceptors.request.use(
-  (config) => {
-    const token =
-      localStorage.getItem('adminToken') || sessionStorage.getItem('adminToken');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/adminlogin';
-    }
-    return Promise.reject(error);
-  }
-);
 
 // ============================================================
 // DESIGN TOKENS — Brown Sidebar Theme
@@ -109,13 +78,7 @@ const BRAND = {
 const SEMESTERS = ['Semester 1', 'Semester 2', 'Semester 3'];
 const ACADEMIC_YEARS = ['2023/2024', '2024/2025', '2025/2026', '2026/2027'];
 
-const RESULT_STATUSES = [
-  'Draft',
-  'Pending',
-  'Published',
-  'Withheld',
-  'Incomplete',
-];
+const RESULT_STATUSES = ['Draft', 'Pending', 'Published', 'Withheld'];
 
 const STATUS_CONFIG = {
   Draft: {
@@ -142,12 +105,6 @@ const STATUS_CONFIG = {
     border: 'border-red-200',
     icon: Lock,
   },
-  Incomplete: {
-    bg: 'bg-orange-50',
-    text: 'text-orange-700',
-    border: 'border-orange-200',
-    icon: FileWarning,
-  },
 };
 
 const GRADE_STYLES = {
@@ -170,21 +127,45 @@ const getGradeStyle = (grade) =>
 const ITEMS_PER_PAGE = 10;
 
 // ============================================================
+// GRADING SCALE (Kenyan university-style)
+// ============================================================
+
+const GRADING_SCALE = [
+  { min: 70, grade: 'A', gp: 4.0 },
+  { min: 65, grade: 'A-', gp: 3.7 },
+  { min: 60, grade: 'B+', gp: 3.3 },
+  { min: 55, grade: 'B', gp: 3.0 },
+  { min: 50, grade: 'B-', gp: 2.7 },
+  { min: 45, grade: 'C+', gp: 2.3 },
+  { min: 40, grade: 'C', gp: 2.0 },
+  { min: 35, grade: 'C-', gp: 1.7 },
+  { min: 30, grade: 'D', gp: 1.0 },
+  { min: 0, grade: 'E', gp: 0.0 },
+];
+
+const computeGrade = (total) => {
+  const t = parseFloat(total);
+  if (isNaN(t)) return { grade: null, gp: null };
+  const row = GRADING_SCALE.find((r) => t >= r.min);
+  return row || { grade: 'E', gp: 0.0 };
+};
+
+// ============================================================
 // VALIDATION SCHEMA
 // ============================================================
 
 const marksSchema = yup.object().shape({
-  student_id: yup.string().required('Student is required'),
-  unit_id: yup.string().required('Unit is required'),
-  academic_year: yup.string().required('Academic year is required'),
+  studentId: yup.string().required('Student is required'),
+  unitId: yup.string().required('Unit is required'),
+  academicYear: yup.string().required('Academic year is required'),
   semester: yup.string().required('Semester is required'),
-  cat_marks: yup
+  catMarks: yup
     .number()
     .typeError('CAT marks must be a number')
     .required('CAT marks is required')
     .min(0, 'CAT marks cannot be negative')
     .max(100, 'CAT marks cannot exceed 100'),
-  exam_marks: yup
+  examMarks: yup
     .number()
     .typeError('Exam marks must be a number')
     .required('Exam marks is required')
@@ -347,7 +328,6 @@ const EmptyState = ({ filtered, onAdd }) => (
   </div>
 );
 
-// Form field
 const FormField = ({
   label,
   name,
@@ -447,39 +427,40 @@ const MarksFormModal = ({
     resolver: yupResolver(marksSchema),
     mode: 'onChange',
     defaultValues: {
-      student_id: '',
-      unit_id: '',
-      academic_year: '',
+      studentId: '',
+      unitId: '',
+      academicYear: '',
       semester: '',
-      cat_marks: '',
-      exam_marks: '',
+      catMarks: '',
+      examMarks: '',
     },
   });
 
-  const catMarks = watch('cat_marks');
-  const examMarks = watch('exam_marks');
+  const catMarks = watch('catMarks');
+  const examMarks = watch('examMarks');
   const previewTotal =
     (parseFloat(catMarks) || 0) + (parseFloat(examMarks) || 0);
+  const previewGrade = computeGrade(previewTotal);
 
   useEffect(() => {
     if (open) {
       if (editingResult) {
         reset({
-          student_id: editingResult.student_id || '',
-          unit_id: editingResult.unit_id || '',
-          academic_year: editingResult.academic_year || '',
+          studentId: editingResult.studentId || '',
+          unitId: editingResult.unitId || '',
+          academicYear: editingResult.academicYear || '',
           semester: editingResult.semester || '',
-          cat_marks: editingResult.cat_marks ?? '',
-          exam_marks: editingResult.exam_marks ?? '',
+          catMarks: editingResult.catMarks ?? '',
+          examMarks: editingResult.examMarks ?? '',
         });
       } else {
         reset({
-          student_id: '',
-          unit_id: '',
-          academic_year: '',
+          studentId: '',
+          unitId: '',
+          academicYear: '',
           semester: '',
-          cat_marks: '',
-          exam_marks: '',
+          catMarks: '',
+          examMarks: '',
         });
       }
     }
@@ -532,7 +513,6 @@ const MarksFormModal = ({
           className="flex-1 overflow-y-auto"
         >
           <div className="p-6 space-y-5">
-            {/* Student & Unit */}
             <div>
               <h4
                 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2"
@@ -543,7 +523,7 @@ const MarksFormModal = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   label="Student"
-                  name="student_id"
+                  name="studentId"
                   register={register}
                   errors={errors}
                   required
@@ -553,7 +533,7 @@ const MarksFormModal = ({
                 />
                 <FormField
                   label="Unit"
-                  name="unit_id"
+                  name="unitId"
                   register={register}
                   errors={errors}
                   required
@@ -563,7 +543,7 @@ const MarksFormModal = ({
                 />
                 <FormField
                   label="Academic Year"
-                  name="academic_year"
+                  name="academicYear"
                   register={register}
                   errors={errors}
                   required
@@ -582,7 +562,6 @@ const MarksFormModal = ({
               </div>
             </div>
 
-            {/* Marks */}
             <div>
               <h4
                 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2"
@@ -593,7 +572,7 @@ const MarksFormModal = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   label="CAT Marks (0-100)"
-                  name="cat_marks"
+                  name="catMarks"
                   register={register}
                   errors={errors}
                   type="number"
@@ -604,7 +583,7 @@ const MarksFormModal = ({
                 />
                 <FormField
                   label="Exam Marks (0-100)"
-                  name="exam_marks"
+                  name="examMarks"
                   register={register}
                   errors={errors}
                   type="number"
@@ -615,7 +594,6 @@ const MarksFormModal = ({
                 />
               </div>
 
-              {/* Preview — total only; grade is determined by backend */}
               <div
                 className="mt-4 flex items-center justify-between gap-3 p-4 rounded-lg border"
                 style={{
@@ -623,7 +601,7 @@ const MarksFormModal = ({
                   borderColor: BRAND.primaryBorder,
                 }}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <Percent
                     className="w-4 h-4"
                     style={{ color: BRAND.primary }}
@@ -635,17 +613,22 @@ const MarksFormModal = ({
                     Total Preview
                   </span>
                 </div>
-                <span
-                  className="text-lg font-bold"
-                  style={{ color: BRAND.primary }}
-                >
-                  {formatNumber(previewTotal, 2)}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span
+                    className="text-lg font-bold"
+                    style={{ color: BRAND.primary }}
+                  >
+                    {formatNumber(previewTotal, 2)}
+                  </span>
+                  {previewGrade.grade && (
+                    <GradeBadge grade={previewGrade.grade} />
+                  )}
+                </div>
               </div>
               <p className="mt-2 text-xs text-gray-500 flex items-center gap-1">
                 <Info className="w-3 h-3" />
-                Grade and grade point will be assigned by the system based on
-                the official grading scale.
+                Grade and grade point will be assigned automatically using the
+                official grading scale.
               </p>
             </div>
           </div>
@@ -695,8 +678,8 @@ const MarksFormModal = ({
 // RESULT DETAILS MODAL
 // ============================================================
 
-const ResultDetailModal = ({ open, onClose, result, loading }) => {
-  if (!open) return null;
+const ResultDetailModal = ({ open, onClose, result }) => {
+  if (!open || !result) return null;
 
   const renderField = (icon, label, value) => (
     <div className="flex items-start gap-3 p-3 rounded-lg bg-gray-50">
@@ -743,9 +726,7 @@ const ResultDetailModal = ({ open, onClose, result, loading }) => {
               <h2 className="text-lg font-bold text-gray-900">
                 Result Details
               </h2>
-              {result && (
-                <p className="text-xs text-gray-500">#{result.id}</p>
-              )}
+              <p className="text-xs text-gray-500">#{result.id}</p>
             </div>
           </div>
           <button
@@ -756,74 +737,60 @@ const ResultDetailModal = ({ open, onClose, result, loading }) => {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {loading || !result ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2
-                className="w-8 h-8 animate-spin"
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <div className="flex items-start justify-between gap-4 pb-4 border-b border-gray-100">
+            <div>
+              <p
+                className="text-xs font-semibold uppercase tracking-wider"
                 style={{ color: BRAND.primary }}
-              />
+              >
+                {result.unitCode}
+              </p>
+              <h3 className="text-xl font-bold text-gray-900 mt-0.5">
+                {result.unitName}
+              </h3>
+              <p className="text-sm text-gray-600 mt-0.5">
+                {result.studentName || result.studentId}
+              </p>
             </div>
-          ) : (
-            <div className="p-5 space-y-5">
-              <div className="flex items-start justify-between gap-4 pb-4 border-b border-gray-100">
-                <div>
-                  <p
-                    className="text-xs font-semibold uppercase tracking-wider"
-                    style={{ color: BRAND.primary }}
-                  >
-                    {result.unit_code}
-                  </p>
-                  <h3 className="text-xl font-bold text-gray-900 mt-0.5">
-                    {result.unit_name}
-                  </h3>
-                  <p className="text-sm text-gray-600 mt-0.5">
-                    {result.student_name || result.student_id}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <GradeBadge grade={result.grade} />
-                  <StatusBadge status={result.status} />
-                </div>
-              </div>
+            <div className="flex items-center gap-2">
+              <GradeBadge grade={result.grade} />
+              <StatusBadge status={result.status} />
+            </div>
+          </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {renderField(FileText, 'CAT Marks', formatNumber(result.cat_marks, 1))}
-                {renderField(Award, 'Exam Marks', formatNumber(result.exam_marks, 1))}
-                {renderField(Target, 'Total Marks', formatNumber(result.total_marks, 1))}
-                {renderField(Percent, 'Grade Point', formatNumber(result.grade_point, 1))}
-                {renderField(Layers, 'Credit Hours', result.credit_hours)}
-                {renderField(Calendar, 'Semester', result.semester)}
-                {renderField(Calendar, 'Academic Year', result.academic_year)}
-                {renderField(
-                  Clock,
-                  'Published At',
-                  formatDate(result.published_at)
-                )}
-              </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {renderField(FileText, 'CAT Marks', formatNumber(result.catMarks, 1))}
+            {renderField(Award, 'Exam Marks', formatNumber(result.examMarks, 1))}
+            {renderField(Target, 'Total Marks', formatNumber(result.totalMarks, 1))}
+            {renderField(Percent, 'Grade Point', formatNumber(result.gradePoint, 1))}
+            {renderField(Layers, 'Credit Hours', result.creditHours)}
+            {renderField(Calendar, 'Semester', result.semester)}
+            {renderField(Calendar, 'Academic Year', result.academicYear)}
+            {renderField(
+              Clock,
+              'Published At',
+              formatDate(result.publishedAt)
+            )}
+          </div>
 
-              {result.remarks && (
-                <div
-                  className="rounded-lg p-4 border"
-                  style={{
-                    backgroundColor: BRAND.primarySoft,
-                    borderColor: BRAND.primaryBorder,
-                  }}
-                >
-                  <p
-                    className="text-xs font-bold uppercase tracking-wider mb-1.5"
-                    style={{ color: BRAND.accent }}
-                  >
-                    Remarks
-                  </p>
-                  <p
-                    className="text-sm"
-                    style={{ color: BRAND.primaryDark }}
-                  >
-                    {result.remarks}
-                  </p>
-                </div>
-              )}
+          {result.remarks && (
+            <div
+              className="rounded-lg p-4 border"
+              style={{
+                backgroundColor: BRAND.primarySoft,
+                borderColor: BRAND.primaryBorder,
+              }}
+            >
+              <p
+                className="text-xs font-bold uppercase tracking-wider mb-1.5"
+                style={{ color: BRAND.accent }}
+              >
+                Remarks
+              </p>
+              <p className="text-sm" style={{ color: BRAND.primaryDark }}>
+                {result.remarks}
+              </p>
             </div>
           )}
         </div>
@@ -909,18 +876,6 @@ const ConfirmModal = ({
                     ? 'border-red-300 bg-red-50'
                     : 'border-gray-300 bg-white'
                 }`}
-                onFocus={(e) => {
-                  if (!inputError) {
-                    e.target.style.borderColor = BRAND.primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = inputError
-                    ? '#fca5a5'
-                    : '#d1d5db';
-                  e.target.style.boxShadow = 'none';
-                }}
               />
               {inputError && (
                 <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
@@ -972,39 +927,40 @@ const ConfirmModal = ({
 // ============================================================
 
 const MarksResults = () => {
-  // State
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [results, setResults] = useState([]);
+  const [accounts, setAccounts] = useState([]);
+  const [units, setUnits] = useState([]);
   const [stats, setStats] = useState({
     studentsWithResults: 0,
     pending: 0,
     published: 0,
     withheld: 0,
-    incomplete: 0,
+    draft: 0,
   });
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({
-    program: '',
-    department: '',
     academicYear: '',
     semester: '',
-    unit: '',
     status: '',
+    unit: '',
   });
   const [showFilters, setShowFilters] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Modals
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [editingResult, setEditingResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedResult, setSelectedResult] = useState(null);
-  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  const [deleteModal, setDeleteModal] = useState(false);
+  const [resultToDelete, setResultToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [publishModal, setPublishModal] = useState(false);
   const [withholdModal, setWithholdModal] = useState(false);
@@ -1015,176 +971,225 @@ const MarksResults = () => {
 
   const [slipLoading, setSlipLoading] = useState(false);
 
-  // Options data (populated from backend)
-  const [studentOptions, setStudentOptions] = useState([]);
-  const [unitOptions, setUnitOptions] = useState([]);
-
   // ============================================================
-  // API
+  // API — JSON SERVER
   // ============================================================
 
-  const fetchResults = useCallback(async (showRefresh = false) => {
+  const fetchAll = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
     else setLoading(true);
 
     try {
-      const params = {};
-      if (filters.program) params.program = filters.program;
-      if (filters.department) params.department = filters.department;
-      if (filters.academicYear) params.academicYear = filters.academicYear;
-      if (filters.semester) params.semester = filters.semester;
-      if (filters.unit) params.unit = filters.unit;
-      if (filters.status) params.status = filters.status;
+      const [resultsRes, accountsRes, unitsRes] = await Promise.allSettled([
+        api.get('/results'),
+        api.get('/accounts'),
+        api.get('/units'),
+      ]);
 
-      const response = await api.get('/api/admin/marks', { params });
-
-      if (response.data.success) {
-        const list = response.data.results || [];
-        setResults(list);
-
-        if (response.data.students) {
-          setStudentOptions(
-            response.data.students.map((s) => ({
-              value: s.id || s.student_id,
-              label: `${s.student_id || s.id} — ${
-                s.full_name || s.student_name
-              }`,
-            }))
-          );
-        }
-        if (response.data.units) {
-          setUnitOptions(
-            response.data.units.map((u) => ({
-              value: u.id || u.unit_id,
-              label: `${u.unit_code} — ${u.unit_name}`,
-            }))
-          );
-        }
-
-        const s = response.data.stats || {};
-        const uniqueStudents = new Set(
-          list.map((r) => r.student_id).filter(Boolean)
-        );
-        setStats({
-          studentsWithResults:
-            s.studentsWithResults ?? uniqueStudents.size,
-          pending: s.pending ?? list.filter((r) => r.status === 'Pending').length,
-          published:
-            s.published ?? list.filter((r) => r.status === 'Published').length,
-          withheld:
-            s.withheld ?? list.filter((r) => r.status === 'Withheld').length,
-          incomplete:
-            s.incomplete ?? list.filter((r) => r.status === 'Incomplete').length,
-        });
-
-        if (showRefresh) toast.success('Results refreshed successfully');
-      } else {
-        toast.error(response.data.message || 'Results could not be loaded.');
+      // Results
+      let list = [];
+      if (resultsRes.status === 'fulfilled') {
+        list = Array.isArray(resultsRes.value.data)
+          ? resultsRes.value.data
+          : [];
       }
+
+      // Accounts (students) — for lookup + picker
+      let accountList = [];
+      if (accountsRes.status === 'fulfilled') {
+        const raw = Array.isArray(accountsRes.value.data)
+          ? accountsRes.value.data
+          : [];
+        accountList = raw.filter((a) => !a.role || a.role === 'student');
+      }
+      setAccounts(accountList);
+
+      // Units — for picker
+      let unitList = [];
+      if (unitsRes.status === 'fulfilled') {
+        unitList = Array.isArray(unitsRes.value.data)
+          ? unitsRes.value.data
+          : [];
+      }
+      setUnits(unitList);
+
+      // Enrich results with student + unit names for display
+      const enriched = list.map((r) => {
+        const acc = accountList.find(
+          (a) =>
+            String(a.id) === String(r.studentId) ||
+            String(a.studentId) === String(r.studentId)
+        );
+        const unit = unitList.find(
+          (u) =>
+            String(u.id) === String(r.unitId) ||
+            String(u.unitCode) === String(r.unitCode)
+        );
+        return {
+          ...r,
+          studentName:
+            r.studentName ||
+            acc?.fullName ||
+            acc?.studentId ||
+            r.studentId,
+          unitCode: r.unitCode || unit?.unitCode || '—',
+          unitName: r.unitName || unit?.unitName || '—',
+          creditHours: r.creditHours ?? unit?.creditHours ?? null,
+        };
+      });
+
+      setResults(enriched);
+
+      // Stats
+      const uniqueStudents = new Set(
+        enriched.map((r) => r.studentId).filter(Boolean)
+      );
+      setStats({
+        studentsWithResults: uniqueStudents.size,
+        pending: enriched.filter((r) => r.status === 'Pending').length,
+        published: enriched.filter((r) => r.status === 'Published').length,
+        withheld: enriched.filter((r) => r.status === 'Withheld').length,
+        draft: enriched.filter((r) => r.status === 'Draft').length,
+      });
+
+      if (showRefresh) toast.success('Results refreshed successfully');
     } catch (error) {
       console.error('Error fetching results:', error);
-      toast.error(
-        error.response?.data?.message ||
-          'Results could not be loaded. Please try again.'
-      );
+      if (!error.response) {
+        toast.error(
+          'Cannot reach JSON Server. Make sure it is running on port 5000.'
+        );
+      } else {
+        toast.error('Results could not be loaded. Please try again.');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [filters]);
+  }, []);
 
-  const fetchResultDetails = async (id) => {
-    setLoadingDetail(true);
-    try {
-      const response = await api.get(`/api/admin/marks/${id}`);
-      if (response.data.success) return response.data.result;
-      throw new Error(response.data.message || 'Failed to load result');
-    } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Result details could not be loaded.'
-      );
-      return null;
-    } finally {
-      setLoadingDetail(false);
-    }
-  };
+  // Build dropdown options
+  const studentOptions = useMemo(
+    () =>
+      accounts.map((a) => ({
+        value: a.id,
+        label: `${a.studentId || a.id} — ${a.fullName || 'Unknown'}`,
+      })),
+    [accounts]
+  );
 
+  const unitOptions = useMemo(
+    () =>
+      units.map((u) => ({
+        value: u.id,
+        label: `${u.unitCode} — ${u.unitName}`,
+      })),
+    [units]
+  );
+
+  // ------------------------------------------------------------
+  // CREATE / UPDATE
+  // ------------------------------------------------------------
   const handleCreateOrUpdate = async (data) => {
     setSubmitting(true);
     try {
+      // Look up related records to denormalize into the result
+      const acc = accounts.find((a) => String(a.id) === String(data.studentId));
+      const unit = units.find((u) => String(u.id) === String(data.unitId));
+
+      const cat = parseFloat(data.catMarks);
+      const exam = parseFloat(data.examMarks);
+      const total = cat + exam;
+      const { grade, gp } = computeGrade(total);
+
       const payload = {
-        student_id: data.student_id,
-        unit_id: data.unit_id,
-        academic_year: data.academic_year,
+        studentId: data.studentId,
+        studentName: acc?.fullName || '',
+        admissionNumber: acc?.admissionNumber || '',
+        program: acc?.program || '',
+        department: acc?.department || '',
+
+        unitId: data.unitId,
+        unitCode: unit?.unitCode || '',
+        unitName: unit?.unitName || '',
+        creditHours: unit?.creditHours ?? null,
+        lecturer: unit?.lecturer || '',
+
+        academicYear: data.academicYear,
         semester: data.semester,
-        cat_marks: parseFloat(data.cat_marks),
-        exam_marks: parseFloat(data.exam_marks),
+
+        catMarks: cat,
+        examMarks: exam,
+        totalMarks: total,
+        grade,
+        gradePoint: gp,
+
+        status: editingResult?.status || 'Pending',
+        updatedAt: new Date().toISOString(),
       };
 
-      const isEdit = Boolean(editingResult);
-      const url = isEdit ? `/api/admin/marks/${editingResult.id}` : '/api/admin/marks';
-      const response = isEdit
-        ? await api.patch(url, payload)
-        : await api.post(url, payload);
-
-      if (response.data.success) {
-        toast.success(
-          isEdit
-            ? 'Result updated successfully.'
-            : 'Result recorded successfully.'
-        );
-        setFormModalOpen(false);
-        setEditingResult(null);
-        fetchResults(true);
+      if (editingResult) {
+        await api.patch(`/results/${editingResult.id}`, payload);
+        toast.success('Result updated successfully.');
       } else {
-        toast.error(
-          response.data.message ||
-            (isEdit ? 'Unable to update result.' : 'Unable to record result.')
-        );
+        await api.post('/results', {
+          ...payload,
+          status: 'Pending',
+          createdAt: new Date().toISOString(),
+        });
+        toast.success('Result recorded successfully.');
       }
+
+      setFormModalOpen(false);
+      setEditingResult(null);
+      await fetchAll(true);
     } catch (error) {
       console.error('Save error:', error);
-      toast.error(
-        error.response?.data?.message ||
-          (editingResult ? 'Unable to update result.' : 'Unable to record result.')
-      );
+      toast.error('Unable to save result.');
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleView = async (result) => {
-    setSelectedResult(result);
-    setDetailOpen(true);
-    const full = await fetchResultDetails(result.id);
-    if (full) setSelectedResult(full);
+  // ------------------------------------------------------------
+  // DELETE
+  // ------------------------------------------------------------
+  const handleDelete = async () => {
+    if (!resultToDelete) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/results/${resultToDelete.id}`);
+      toast.success('Result deleted successfully.');
+      setDeleteModal(false);
+      setResultToDelete(null);
+      await fetchAll(true);
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error('Unable to delete result.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
-  const handleEdit = (result) => {
-    setEditingResult(result);
-    setFormModalOpen(true);
-  };
-
+  // ------------------------------------------------------------
+  // PUBLISH / WITHHOLD
+  // ------------------------------------------------------------
   const handlePublish = async () => {
     if (!actionResult) return;
     setActionLoading(true);
     try {
-      const response = await api.patch(
-        `/api/admin/marks/${actionResult.id}/publish`
-      );
-      if (response.data.success) {
-        toast.success('Result published successfully.');
-        setPublishModal(false);
-        setActionResult(null);
-        fetchResults(true);
-      } else {
-        toast.error(response.data.message || 'Unable to publish result.');
-      }
+      await api.patch(`/results/${actionResult.id}`, {
+        status: 'Published',
+        publishedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      toast.success('Result published successfully.');
+      setPublishModal(false);
+      setActionResult(null);
+      await fetchAll(true);
     } catch (error) {
       console.error('Publish error:', error);
-      toast.error(
-        error.response?.data?.message || 'Unable to publish result.'
-      );
+      toast.error('Unable to publish result.');
     } finally {
       setActionLoading(false);
     }
@@ -1198,67 +1203,47 @@ const MarksResults = () => {
     }
     setActionLoading(true);
     try {
-      const response = await api.patch(
-        `/api/admin/marks/${actionResult.id}/withhold`,
-        { reason: withholdReason.trim() }
-      );
-      if (response.data.success) {
-        toast.success('Result withheld successfully.');
-        setWithholdModal(false);
-        setActionResult(null);
-        setWithholdReason('');
-        setWithholdError('');
-        fetchResults(true);
-      } else {
-        toast.error(response.data.message || 'Unable to withhold result.');
-      }
+      await api.patch(`/results/${actionResult.id}`, {
+        status: 'Withheld',
+        remarks: withholdReason.trim(),
+        updatedAt: new Date().toISOString(),
+      });
+      toast.success('Result withheld successfully.');
+      setWithholdModal(false);
+      setActionResult(null);
+      setWithholdReason('');
+      setWithholdError('');
+      await fetchAll(true);
     } catch (error) {
       console.error('Withhold error:', error);
-      toast.error(
-        error.response?.data?.message || 'Unable to withhold result.'
-      );
+      toast.error('Unable to withhold result.');
     } finally {
       setActionLoading(false);
     }
   };
 
+  // ------------------------------------------------------------
+  // SLIP EXPORT (JSON fallback since JSON Server has no PDF)
+  // ------------------------------------------------------------
   const handleGenerateSlip = async (result) => {
     setSlipLoading(true);
     try {
-      const response = await api.get(
-        `/api/admin/results/${result.id}/slip`,
-        { responseType: 'blob' }
-      );
-
-      const contentType = response.headers['content-type'];
-
-      if (contentType && contentType.includes('application/json')) {
-        const text = await response.data.text();
-        const data = JSON.parse(text);
-        if (data.pdfUrl) {
-          window.open(data.pdfUrl, '_blank');
-          toast.success('Result slip opened');
-        } else {
-          toast.error('Result slip is currently unavailable.');
-        }
-      } else {
-        const blob = new Blob([response.data], { type: 'application/pdf' });
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `Result_Slip_${result.student_id}_${result.unit_code}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-        toast.success('Result slip downloaded successfully');
-      }
+      // Export the single result record as JSON
+      const blob = new Blob([JSON.stringify(result, null, 2)], {
+        type: 'application/json',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Result_${result.studentId}_${result.unitCode}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Result slip downloaded');
     } catch (error) {
       console.error('Slip error:', error);
-      toast.error(
-        error.response?.data?.message ||
-          'Result slip is currently unavailable.'
-      );
+      toast.error('Result slip is currently unavailable.');
     } finally {
       setSlipLoading(false);
     }
@@ -1274,25 +1259,22 @@ const MarksResults = () => {
       const s = searchTerm.toLowerCase();
       list = list.filter(
         (r) =>
-          String(r.student_id || '').toLowerCase().includes(s) ||
-          String(r.student_name || '').toLowerCase().includes(s) ||
-          String(r.unit_code || '').toLowerCase().includes(s) ||
-          String(r.unit_name || '').toLowerCase().includes(s)
+          String(r.studentId || '').toLowerCase().includes(s) ||
+          String(r.studentName || '').toLowerCase().includes(s) ||
+          String(r.unitCode || '').toLowerCase().includes(s) ||
+          String(r.unitName || '').toLowerCase().includes(s)
       );
     }
-    if (filters.program)
-      list = list.filter((r) => r.program === filters.program);
-    if (filters.department)
-      list = list.filter((r) => r.department === filters.department);
     if (filters.academicYear)
-      list = list.filter((r) => r.academic_year === filters.academicYear);
+      list = list.filter((r) => r.academicYear === filters.academicYear);
     if (filters.semester)
       list = list.filter((r) => r.semester === filters.semester);
+    if (filters.status)
+      list = list.filter((r) => r.status === filters.status);
     if (filters.unit)
       list = list.filter(
-        (r) => r.unit_code === filters.unit || r.unit_name === filters.unit
+        (r) => r.unitCode === filters.unit || r.unitName === filters.unit
       );
-    if (filters.status) list = list.filter((r) => r.status === filters.status);
     return list;
   }, [results, searchTerm, filters]);
 
@@ -1304,46 +1286,29 @@ const MarksResults = () => {
 
   const hasActiveFilters = Boolean(
     searchTerm ||
-      filters.program ||
-      filters.department ||
       filters.academicYear ||
       filters.semester ||
-      filters.unit ||
-      filters.status
+      filters.status ||
+      filters.unit
   );
 
   const handleClearFilters = () => {
     setSearchTerm('');
-    setFilters({
-      program: '',
-      department: '',
-      academicYear: '',
-      semester: '',
-      unit: '',
-      status: '',
-    });
+    setFilters({ academicYear: '', semester: '', status: '', unit: '' });
   };
 
-  // ============================================================
-  // EFFECTS
-  // ============================================================
-
   useEffect(() => {
-    fetchResults();
-  }, [fetchResults]);
+    fetchAll();
+  }, [fetchAll]);
 
-  const programOptions = useMemo(
-    () => [...new Set(results.map((r) => r.program).filter(Boolean))],
-    [results]
-  );
-  const departmentOptions = useMemo(
-    () => [...new Set(results.map((r) => r.department).filter(Boolean))],
-    [results]
-  );
   const unitFilterOptions = useMemo(
     () => [
       ...new Set(
-        results.map((r) => (r.unit_code ? `${r.unit_code} — ${r.unit_name}` : null)).filter(Boolean)
+        results
+          .map((r) =>
+            r.unitCode ? `${r.unitCode} — ${r.unitName}` : null
+          )
+          .filter(Boolean)
       ),
     ],
     [results]
@@ -1368,9 +1333,7 @@ const MarksResults = () => {
       />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* ============================================================
-            PAGE HEADER
-            ============================================================ */}
+        {/* PAGE HEADER */}
         <div className="mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
@@ -1390,13 +1353,13 @@ const MarksResults = () => {
                 Marks & Results
               </h1>
               <p className="text-sm text-gray-500 mt-1 ml-11">
-                Manage student marks, grades, GPA and academic results.
+                Record, edit, publish or delete student marks.
               </p>
             </div>
 
             <div className="flex items-center gap-2 ml-11 sm:ml-0">
               <button
-                onClick={() => fetchResults(true)}
+                onClick={() => fetchAll(true)}
                 disabled={refreshing}
                 className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
@@ -1427,13 +1390,11 @@ const MarksResults = () => {
           </div>
         </div>
 
-        {/* ============================================================
-            STATISTICS CARDS
-            ============================================================ */}
+        {/* STATISTICS */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
           <StatCard
             icon={Users}
-            label="Students with Results"
+            label="Students"
             value={stats.studentsWithResults}
             accent="brown"
             active={false}
@@ -1441,7 +1402,7 @@ const MarksResults = () => {
           />
           <StatCard
             icon={Clock}
-            label="Pending Results"
+            label="Pending"
             value={stats.pending}
             accent="amber"
             active={filters.status === 'Pending'}
@@ -1454,7 +1415,7 @@ const MarksResults = () => {
           />
           <StatCard
             icon={CheckCircle}
-            label="Published Results"
+            label="Published"
             value={stats.published}
             accent="emerald"
             active={filters.status === 'Published'}
@@ -1467,7 +1428,7 @@ const MarksResults = () => {
           />
           <StatCard
             icon={Lock}
-            label="Withheld Results"
+            label="Withheld"
             value={stats.withheld}
             accent="red"
             active={filters.status === 'Withheld'}
@@ -1479,30 +1440,28 @@ const MarksResults = () => {
             }
           />
           <StatCard
-            icon={FileWarning}
-            label="Incomplete Results"
-            value={stats.incomplete}
+            icon={FileText}
+            label="Draft"
+            value={stats.draft}
             accent="orange"
-            active={filters.status === 'Incomplete'}
+            active={filters.status === 'Draft'}
             onClick={() =>
               setFilters((f) => ({
                 ...f,
-                status: f.status === 'Incomplete' ? '' : 'Incomplete',
+                status: f.status === 'Draft' ? '' : 'Draft',
               }))
             }
           />
         </div>
 
-        {/* ============================================================
-            SEARCH & FILTERS
-            ============================================================ */}
+        {/* SEARCH & FILTERS */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 type="text"
-                placeholder="Search by student ID, name, unit code, unit name..."
+                placeholder="Search by student ID, name, unit code..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 text-sm border border-gray-300 rounded-lg outline-none transition-all"
@@ -1550,8 +1509,6 @@ const MarksResults = () => {
                 >
                   {
                     [
-                      filters.program,
-                      filters.department,
                       filters.academicYear,
                       filters.semester,
                       filters.unit,
@@ -1570,11 +1527,13 @@ const MarksResults = () => {
 
           {showFilters && (
             <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {[
-                  { key: 'program', label: 'Program', options: programOptions },
-                  { key: 'department', label: 'Department', options: departmentOptions },
-                  { key: 'academicYear', label: 'Academic Year', options: ACADEMIC_YEARS },
+                  {
+                    key: 'academicYear',
+                    label: 'Academic Year',
+                    options: ACADEMIC_YEARS,
+                  },
                   { key: 'semester', label: 'Semester', options: SEMESTERS },
                   { key: 'unit', label: 'Unit', options: unitFilterOptions },
                   { key: 'status', label: 'Result Status', options: RESULT_STATUSES },
@@ -1589,14 +1548,6 @@ const MarksResults = () => {
                         setFilters((f) => ({ ...f, [key]: e.target.value }))
                       }
                       className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none"
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = BRAND.primary;
-                        e.currentTarget.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = '#d1d5db';
-                        e.currentTarget.style.boxShadow = 'none';
-                      }}
                     >
                       <option value="">All</option>
                       {options.map((o) => (
@@ -1625,9 +1576,7 @@ const MarksResults = () => {
           )}
         </div>
 
-        {/* ============================================================
-            RESULTS TABLE
-            ============================================================ */}
+        {/* RESULTS TABLE */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
           {loading ? (
             <TableSkeleton />
@@ -1689,12 +1638,12 @@ const MarksResults = () => {
                             className="text-sm font-semibold"
                             style={{ color: BRAND.primary }}
                           >
-                            {r.student_id}
+                            {r.admissionNumber || r.studentId}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm font-medium text-gray-900 block max-w-[180px] truncate">
-                            {r.student_name || '—'}
+                            {r.studentName || '—'}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
@@ -1702,33 +1651,33 @@ const MarksResults = () => {
                             className="text-sm font-semibold"
                             style={{ color: BRAND.primary }}
                           >
-                            {r.unit_code}
+                            {r.unitCode}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm text-gray-700 block max-w-[220px] truncate">
-                            {r.unit_name}
+                            {r.unitName}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="inline-flex items-center gap-1 text-sm text-gray-700">
                             <Layers className="w-3.5 h-3.5 text-gray-400" />
-                            {r.credit_hours ?? '—'}
+                            {r.creditHours ?? '—'}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm text-gray-700">
-                            {formatNumber(r.cat_marks, 1)}
+                            {formatNumber(r.catMarks, 1)}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm text-gray-700">
-                            {formatNumber(r.exam_marks, 1)}
+                            {formatNumber(r.examMarks, 1)}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm font-semibold text-gray-900">
-                            {formatNumber(r.total_marks, 1)}
+                            {formatNumber(r.totalMarks, 1)}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
@@ -1736,7 +1685,7 @@ const MarksResults = () => {
                         </td>
                         <td className="px-4 py-3.5">
                           <span className="text-sm text-gray-700">
-                            {formatNumber(r.grade_point, 1)}
+                            {formatNumber(r.gradePoint, 1)}
                           </span>
                         </td>
                         <td className="px-4 py-3.5">
@@ -1745,63 +1694,37 @@ const MarksResults = () => {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center justify-center gap-1">
                             <button
-                              onClick={() => handleView(r)}
-                              className="p-1.5 text-gray-500 rounded-lg transition-colors"
+                              onClick={() => {
+                                setSelectedResult(r);
+                                setDetailOpen(true);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-[#6B4423] hover:bg-[#F5EFE6] rounded-lg transition-colors"
                               title="View Details"
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.color = BRAND.primary;
-                                e.currentTarget.style.backgroundColor =
-                                  BRAND.primarySoft;
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.color = '#6b7280';
-                                e.currentTarget.style.backgroundColor =
-                                  'transparent';
-                              }}
                             >
                               <Eye className="w-4 h-4" />
                             </button>
+                            <button
+                              onClick={() => {
+                                setEditingResult(r);
+                                setFormModalOpen(true);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit Marks"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
                             {r.status !== 'Published' && (
-                              <button
-                                onClick={() => handleEdit(r)}
-                                className="p-1.5 text-gray-500 rounded-lg transition-colors"
-                                title="Edit Marks"
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color = '#2563eb';
-                                  e.currentTarget.style.backgroundColor =
-                                    '#eff6ff';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color = '#6b7280';
-                                  e.currentTarget.style.backgroundColor =
-                                    'transparent';
-                                }}
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
-                            )}
-                            {r.status === 'Draft' || r.status === 'Pending' ? (
                               <button
                                 onClick={() => {
                                   setActionResult(r);
                                   setPublishModal(true);
                                 }}
-                                className="p-1.5 text-gray-500 rounded-lg transition-colors"
+                                className="p-1.5 text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                                 title="Publish"
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color = '#059669';
-                                  e.currentTarget.style.backgroundColor =
-                                    '#ecfdf5';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color = '#6b7280';
-                                  e.currentTarget.style.backgroundColor =
-                                    'transparent';
-                                }}
                               >
                                 <Send className="w-4 h-4" />
                               </button>
-                            ) : null}
+                            )}
                             {r.status === 'Published' && (
                               <button
                                 onClick={() => {
@@ -1810,18 +1733,8 @@ const MarksResults = () => {
                                   setWithholdError('');
                                   setWithholdModal(true);
                                 }}
-                                className="p-1.5 text-gray-500 rounded-lg transition-colors"
+                                className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                 title="Withhold"
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color = '#dc2626';
-                                  e.currentTarget.style.backgroundColor =
-                                    '#fef2f2';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color = '#6b7280';
-                                  e.currentTarget.style.backgroundColor =
-                                    'transparent';
-                                }}
                               >
                                 <Lock className="w-4 h-4" />
                               </button>
@@ -1829,20 +1742,20 @@ const MarksResults = () => {
                             <button
                               onClick={() => handleGenerateSlip(r)}
                               disabled={slipLoading}
-                              className="p-1.5 text-gray-500 rounded-lg transition-colors disabled:opacity-50"
-                              title="Generate Result Slip"
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.color = BRAND.primary;
-                                e.currentTarget.style.backgroundColor =
-                                  BRAND.primarySoft;
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.color = '#6b7280';
-                                e.currentTarget.style.backgroundColor =
-                                  'transparent';
-                              }}
+                              className="p-1.5 text-gray-500 hover:text-[#6B4423] hover:bg-[#F5EFE6] rounded-lg transition-colors disabled:opacity-50"
+                              title="Download Slip"
                             >
                               <Download className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                setResultToDelete(r);
+                                setDeleteModal(true);
+                              }}
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         </td>
@@ -1866,16 +1779,16 @@ const MarksResults = () => {
                             className="text-sm font-bold"
                             style={{ color: BRAND.primary }}
                           >
-                            {r.unit_code}
+                            {r.unitCode}
                           </span>
                           <GradeBadge grade={r.grade} />
                           <StatusBadge status={r.status} />
                         </div>
                         <h3 className="text-sm font-semibold text-gray-900 truncate">
-                          {r.unit_name}
+                          {r.unitName}
                         </h3>
                         <p className="text-xs text-gray-500 truncate">
-                          {r.student_name || r.student_id}
+                          {r.studentName || r.studentId}
                         </p>
                       </div>
                     </div>
@@ -1883,25 +1796,28 @@ const MarksResults = () => {
                     <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
                       <div className="flex items-center gap-1.5 text-gray-600">
                         <Hash className="w-3.5 h-3.5 text-gray-400" />
-                        {r.student_id}
+                        {r.admissionNumber || r.studentId}
                       </div>
                       <div className="flex items-center gap-1.5 text-gray-600">
                         <Target className="w-3.5 h-3.5 text-gray-400" />
-                        Total: {formatNumber(r.total_marks, 1)}
+                        Total: {formatNumber(r.totalMarks, 1)}
                       </div>
                       <div className="flex items-center gap-1.5 text-gray-600">
                         <FileText className="w-3.5 h-3.5 text-gray-400" />
-                        CAT: {formatNumber(r.cat_marks, 1)}
+                        CAT: {formatNumber(r.catMarks, 1)}
                       </div>
                       <div className="flex items-center gap-1.5 text-gray-600">
                         <Award className="w-3.5 h-3.5 text-gray-400" />
-                        Exam: {formatNumber(r.exam_marks, 1)}
+                        Exam: {formatNumber(r.examMarks, 1)}
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 pt-3 border-t border-gray-100 flex-wrap">
                       <button
-                        onClick={() => handleView(r)}
+                        onClick={() => {
+                          setSelectedResult(r);
+                          setDetailOpen(true);
+                        }}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors"
                         style={{
                           color: BRAND.primary,
@@ -1911,41 +1827,25 @@ const MarksResults = () => {
                         <Eye className="w-3.5 h-3.5" />
                         View
                       </button>
-                      {r.status !== 'Published' && (
-                        <button
-                          onClick={() => handleEdit(r)}
-                          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                          Edit
-                        </button>
-                      )}
-                      {(r.status === 'Draft' || r.status === 'Pending') && (
-                        <button
-                          onClick={() => {
-                            setActionResult(r);
-                            setPublishModal(true);
-                          }}
-                          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
-                        >
-                          <Send className="w-3.5 h-3.5" />
-                          Publish
-                        </button>
-                      )}
-                      {r.status === 'Published' && (
-                        <button
-                          onClick={() => {
-                            setActionResult(r);
-                            setWithholdReason('');
-                            setWithholdError('');
-                            setWithholdModal(true);
-                          }}
-                          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                          Withhold
-                        </button>
-                      )}
+                      <button
+                        onClick={() => {
+                          setEditingResult(r);
+                          setFormModalOpen(true);
+                        }}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setResultToDelete(r);
+                          setDeleteModal(true);
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -1997,19 +1897,12 @@ const MarksResults = () => {
                                 ? 'text-white border-transparent'
                                 : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                             }`}
-                            style={active ? { backgroundColor: BRAND.primary } : {}}
+                            style={
+                              active ? { backgroundColor: BRAND.primary } : {}
+                            }
                           >
                             {page}
                           </button>
-                        );
-                      } else if (
-                        page === currentPage - 2 ||
-                        page === currentPage + 2
-                      ) {
-                        return (
-                          <span key={page} className="px-2 text-gray-400">
-                            ...
-                          </span>
                         );
                       }
                       return null;
@@ -2030,7 +1923,6 @@ const MarksResults = () => {
           )}
         </div>
 
-        {/* Info footer */}
         {!loading && results.length > 0 && (
           <div
             className="mt-4 flex items-start gap-2 p-3 rounded-lg border"
@@ -2044,17 +1936,15 @@ const MarksResults = () => {
               style={{ color: BRAND.primary }}
             />
             <p className="text-xs" style={{ color: BRAND.primaryDark }}>
-              Grades and grade points are calculated by the system using the
-              official university grading scale. Students will only see results
-              marked as <strong>Published</strong> on their dashboard.
+              Grades and grade points are computed automatically using the
+              official grading scale. Students only see results marked as{' '}
+              <strong>Published</strong>.
             </p>
           </div>
         )}
       </div>
 
-      {/* ============================================================
-          MODALS
-          ============================================================ */}
+      {/* MODALS */}
       <MarksFormModal
         open={formModalOpen}
         onClose={() => {
@@ -2075,7 +1965,6 @@ const MarksResults = () => {
           setSelectedResult(null);
         }}
         result={selectedResult}
-        loading={loadingDetail}
       />
 
       <ConfirmModal
@@ -2086,7 +1975,7 @@ const MarksResults = () => {
         }}
         onConfirm={handlePublish}
         title="Publish Result?"
-        message={`Publishing this result will make it immediately visible to the student on their dashboard. Make sure the marks are correct before publishing.`}
+        message="Publishing this result will make it immediately visible to the student on their dashboard."
         confirmText="Publish Result"
         loading={actionLoading}
         variant="primary"
@@ -2116,6 +2005,20 @@ const MarksResults = () => {
         }}
         inputRequired
         inputError={withholdError}
+      />
+
+      <ConfirmModal
+        open={deleteModal}
+        onClose={() => {
+          setDeleteModal(false);
+          setResultToDelete(null);
+        }}
+        onConfirm={handleDelete}
+        title="Delete Result?"
+        message="This will permanently remove the result from db.json. This action cannot be undone."
+        confirmText="Delete Result"
+        loading={deleting}
+        variant="danger"
       />
     </div>
   );

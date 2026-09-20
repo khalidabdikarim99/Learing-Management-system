@@ -43,53 +43,43 @@ import {
   AlertTriangle,
   Bell,
   BookMarked,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 // ============================================================
-// API CONFIGURATION
+// API CONFIGURATION — JSON SERVER
 // ============================================================
 
-const getApiBaseUrl = () => {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
-  }
-  if (typeof process !== 'undefined' && process.env?.REACT_APP_API_URL) {
-    return process.env.REACT_APP_API_URL;
-  }
-  return 'http://localhost:5000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 
-api.interceptors.request.use(
-  (config) => {
-    const token =
-      localStorage.getItem('adminToken') || sessionStorage.getItem('adminToken');
-    if (token) config.headers.Authorization = `Bearer ${token}`;
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// ============================================================
+// HELPERS — CURRENT ADMIN
+// ============================================================
 
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.href = '/adminlogin';
-    }
-    return Promise.reject(error);
+function getCurrentAdmin() {
+  try {
+    const raw =
+      localStorage.getItem('adminUser') || sessionStorage.getItem('adminUser');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
-);
+}
+
+function getAuthStorage() {
+  return localStorage.getItem('adminUser') ? localStorage : sessionStorage;
+}
 
 // ============================================================
-// DESIGN TOKENS — Brown Sidebar Theme
+// DESIGN TOKENS
 // ============================================================
 
 const BRAND = {
@@ -121,7 +111,7 @@ const STUDY_LEVELS = [
 const ANNOUNCEMENT_PRIORITIES = ['Low', 'Normal', 'High', 'Urgent'];
 
 // ============================================================
-// VALIDATION SCHEMAS
+// VALIDATION
 // ============================================================
 
 const adminProfileSchema = yup.object().shape({
@@ -129,6 +119,21 @@ const adminProfileSchema = yup.object().shape({
   last_name: yup.string().required('Last name is required'),
   email: yup.string().required('Email is required').email('Invalid email'),
   phone: yup.string().required('Phone is required'),
+});
+
+const passwordSchema = yup.object().shape({
+  current_password: yup.string().required('Current password is required'),
+  new_password: yup
+    .string()
+    .required('New password is required')
+    .min(8, 'Password must be at least 8 characters')
+    .matches(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .matches(/[a-z]/, 'Must contain at least one lowercase letter')
+    .matches(/[0-9]/, 'Must contain at least one number'),
+  confirm_password: yup
+    .string()
+    .required('Please confirm your new password')
+    .oneOf([yup.ref('new_password'), null], 'Passwords do not match'),
 });
 
 const universitySchema = yup.object().shape({
@@ -196,7 +201,7 @@ const announcementSchema = yup.object().shape({
 });
 
 // ============================================================
-// UTILITY FUNCTIONS
+// UTILITY
 // ============================================================
 
 const formatDate = (dateString) => {
@@ -216,7 +221,6 @@ const formatDate = (dateString) => {
 // SUB-COMPONENTS
 // ============================================================
 
-// Section Card
 const SectionCard = ({
   icon: Icon,
   title,
@@ -268,7 +272,6 @@ const SectionCard = ({
   );
 };
 
-// Status Badge
 const StatusBadge = ({ status }) => {
   const config =
     {
@@ -332,7 +335,6 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-// Form field
 const FormField = ({
   label,
   name,
@@ -415,7 +417,49 @@ const FormField = ({
   );
 };
 
-// Toggle
+const PasswordField = ({
+  label,
+  name,
+  register,
+  errors,
+  show,
+  onToggle,
+  placeholder,
+}) => {
+  const error = errors[name];
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1.5">
+        {label} <span className="text-red-500">*</span>
+      </label>
+      <div className="relative">
+        <Lock className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          {...register(name)}
+          type={show ? 'text' : 'password'}
+          placeholder={placeholder}
+          className={`w-full pl-10 pr-12 py-2.5 text-sm border rounded-lg outline-none transition-all ${
+            error ? 'border-red-300 bg-red-50' : 'border-gray-300 bg-white'
+          }`}
+        />
+        <button
+          type="button"
+          onClick={onToggle}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+        >
+          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+      </div>
+      {error && (
+        <p className="mt-1 text-xs text-red-600 flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" />
+          {error.message}
+        </p>
+      )}
+    </div>
+  );
+};
+
 const Toggle = ({ checked, onChange, label, description, icon: Icon }) => (
   <div className="flex items-start justify-between gap-4 py-3 border-b border-gray-100 last:border-b-0">
     <div className="flex items-start gap-3 flex-1">
@@ -451,7 +495,6 @@ const Toggle = ({ checked, onChange, label, description, icon: Icon }) => (
   </div>
 );
 
-// Generic CRUD Modal
 const CrudModal = ({
   open,
   onClose,
@@ -523,12 +566,20 @@ const Settings = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Profile
+  // Admin record (from /adminCredentials)
+  const [adminId, setAdminId] = useState(null);
   const [profile, setProfile] = useState(null);
   const [editingProfile, setEditingProfile] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
 
-  // University
+  // Password change
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+  const [showNewPwd, setShowNewPwd] = useState(false);
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
+
+  // University + settings document (from /settings)
+  const [settingsId, setSettingsId] = useState(null);
   const [university, setUniversity] = useState(null);
   const [editingUniversity, setEditingUniversity] = useState(false);
   const [savingUniversity, setSavingUniversity] = useState(false);
@@ -557,7 +608,7 @@ const Settings = () => {
   const [editingProg, setEditingProg] = useState(null);
   const [savingProg, setSavingProg] = useState(false);
 
-  // Registration Settings
+  // Registration settings
   const [registrationSettings, setRegistrationSettings] = useState({
     registration_open: true,
     max_credit_hours: 24,
@@ -568,7 +619,7 @@ const Settings = () => {
   });
   const [savingReg, setSavingReg] = useState(false);
 
-  // Result Settings
+  // Result settings
   const [resultSettings, setResultSettings] = useState({
     result_publication_auto: false,
     require_approval: true,
@@ -582,13 +633,19 @@ const Settings = () => {
   const [editingAnn, setEditingAnn] = useState(null);
   const [savingAnn, setSavingAnn] = useState(false);
 
-  // ============================================================
-  // FORMS — declared unconditionally at top level
-  // ============================================================
-
+  // Forms
   const profileForm = useForm({
     resolver: yupResolver(adminProfileSchema),
     mode: 'onChange',
+  });
+  const passwordForm = useForm({
+    resolver: yupResolver(passwordSchema),
+    mode: 'onChange',
+    defaultValues: {
+      current_password: '',
+      new_password: '',
+      confirm_password: '',
+    },
   });
   const universityForm = useForm({
     resolver: yupResolver(universitySchema),
@@ -615,10 +672,7 @@ const Settings = () => {
     mode: 'onChange',
   });
 
-  // ============================================================
-  // DERIVED OPTIONS — all useMemo hooks run unconditionally
-  // ============================================================
-
+  // Derived options
   const academicYearOptions = useMemo(
     () => academicYears.map((ay) => ay.name),
     [academicYears]
@@ -640,7 +694,7 @@ const Settings = () => {
   );
 
   // ============================================================
-  // API — FETCH
+  // FETCH EVERYTHING
   // ============================================================
 
   const fetchAllSettings = useCallback(
@@ -649,95 +703,117 @@ const Settings = () => {
       else setLoading(true);
 
       try {
-        const results = await Promise.allSettled([
-          api.get('/api/admin/profile'),
-          api.get('/api/admin/settings/university'),
-          api.get('/api/admin/academic-years'),
-          api.get('/api/admin/semesters'),
-          api.get('/api/admin/departments'),
-          api.get('/api/admin/programs'),
-          api.get('/api/admin/settings/registration'),
-          api.get('/api/admin/settings/results'),
-          api.get('/api/admin/announcements'),
-        ]);
+        const currentAdmin = getCurrentAdmin();
+        if (!currentAdmin) {
+          toast.error('Admin session expired. Please log in again.');
+          setTimeout(() => {
+            window.location.href = '/adminlogin';
+          }, 800);
+          setLoading(false);
+          setRefreshing(false);
+          return;
+        }
 
+        const adminKey = currentAdmin.id;
+
+        // 1) Fetch admin record, settings document, and related collections
         const [
-          profileRes,
-          uniRes,
+          adminRes,
+          settingsRes,
           ayRes,
           semRes,
           deptRes,
           progRes,
-          regRes,
-          resRes,
           annRes,
-        ] = results;
+        ] = await Promise.allSettled([
+          api.get(`/adminCredentials/${adminKey}`),
+          api.get('/settings'),
+          api.get('/academicYears'),
+          api.get('/semesters'),
+          api.get('/departments'),
+          api.get('/programs'),
+          api.get('/announcements'),
+        ]);
 
-        if (profileRes.status === 'fulfilled' && profileRes.value.data.success) {
-          const p = profileRes.value.data.profile;
-          setProfile(p);
+        // --- Admin record ---
+        if (adminRes.status === 'fulfilled' && adminRes.value.data) {
+          const a = adminRes.value.data;
+          setAdminId(a.id);
+          setProfile(a);
           profileForm.reset({
-            first_name: p.first_name || '',
-            last_name: p.last_name || '',
-            email: p.email || '',
-            phone: p.phone || '',
+            first_name: a.first_name || '',
+            last_name: a.last_name || '',
+            email: a.email || '',
+            phone: a.phone || '',
           });
         }
 
-        if (uniRes.status === 'fulfilled' && uniRes.value.data.success) {
-          const u = uniRes.value.data.university;
-          setUniversity(u);
-          universityForm.reset({
-            university_name: u.university_name || '',
-            university_code: u.university_code || '',
-            faculty: u.faculty || '',
-            contact_email: u.contact_email || '',
-            contact_phone: u.contact_phone || '',
-            website: u.website || '',
-            address: u.address || '',
-            city: u.city || '',
-            country: u.country || '',
-          });
+        // --- Settings document (university + registration + results) ---
+        if (settingsRes.status === 'fulfilled') {
+          const allSettings = Array.isArray(settingsRes.value.data)
+            ? settingsRes.value.data
+            : [];
+          const doc =
+            allSettings.find((s) => String(s.adminId) === String(adminKey)) ||
+            allSettings[0] ||
+            null;
+
+          if (doc) {
+            setSettingsId(doc.id);
+
+            if (doc.university) {
+              setUniversity(doc.university);
+              universityForm.reset({
+                university_name: doc.university.university_name || '',
+                university_code: doc.university.university_code || '',
+                faculty: doc.university.faculty || '',
+                contact_email: doc.university.contact_email || '',
+                contact_phone: doc.university.contact_phone || '',
+                website: doc.university.website || '',
+                address: doc.university.address || '',
+                city: doc.university.city || '',
+                country: doc.university.country || '',
+              });
+            }
+
+            if (doc.registration) {
+              setRegistrationSettings((prev) => ({
+                ...prev,
+                ...doc.registration,
+              }));
+            }
+
+            if (doc.results) {
+              setResultSettings((prev) => ({
+                ...prev,
+                ...doc.results,
+              }));
+            }
+          }
         }
 
-        if (ayRes.status === 'fulfilled' && ayRes.value.data.success) {
-          setAcademicYears(ayRes.value.data.academicYears || []);
-        }
+        // --- Collections ---
+        const safeArr = (res) =>
+          res.status === 'fulfilled' && Array.isArray(res.value.data)
+            ? res.value.data
+            : [];
 
-        if (semRes.status === 'fulfilled' && semRes.value.data.success) {
-          setSemesters(semRes.value.data.semesters || []);
-        }
-
-        if (deptRes.status === 'fulfilled' && deptRes.value.data.success) {
-          setDepartments(deptRes.value.data.departments || []);
-        }
-
-        if (progRes.status === 'fulfilled' && progRes.value.data.success) {
-          setPrograms(progRes.value.data.programs || []);
-        }
-
-        if (regRes.status === 'fulfilled' && regRes.value.data.success) {
-          setRegistrationSettings((prev) => ({
-            ...prev,
-            ...regRes.value.data.settings,
-          }));
-        }
-
-        if (resRes.status === 'fulfilled' && resRes.value.data.success) {
-          setResultSettings((prev) => ({
-            ...prev,
-            ...resRes.value.data.settings,
-          }));
-        }
-
-        if (annRes.status === 'fulfilled' && annRes.value.data.success) {
-          setAnnouncements(annRes.value.data.announcements || []);
-        }
+        setAcademicYears(safeArr(ayRes));
+        setSemesters(safeArr(semRes));
+        setDepartments(safeArr(deptRes));
+        setPrograms(safeArr(progRes));
+        setAnnouncements(safeArr(annRes));
 
         if (showRefresh) toast.success('Settings refreshed successfully');
       } catch (error) {
         console.error('Error fetching settings:', error);
-        toast.error('Some settings could not be loaded.');
+        if (!error.response) {
+          toast.error(
+            'Cannot reach JSON Server. Make sure it is running on port 5000.'
+          );
+        } else {
+          toast.error('Some settings could not be loaded.');
+        }
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -755,47 +831,157 @@ const Settings = () => {
   // ============================================================
 
   const handleSaveProfile = async (data) => {
+    if (!adminId) {
+      toast.error('Admin record not found.');
+      return;
+    }
     setSavingProfile(true);
     try {
-      const res = await api.patch('/api/admin/profile', data);
-      if (res.data.success) {
-        toast.success('Profile updated successfully.');
-        setProfile(res.data.profile || { ...profile, ...data });
-        setEditingProfile(false);
-      } else {
-        toast.error(res.data.message || 'Unable to update profile.');
+      const payload = {
+        first_name: data.first_name.trim(),
+        last_name: data.last_name.trim(),
+        email: data.email.trim().toLowerCase(),
+        phone: data.phone.trim(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await api.patch(`/adminCredentials/${adminId}`, payload);
+
+      const updated = { ...profile, ...payload };
+      setProfile(updated);
+      setEditingProfile(false);
+
+      // Sync localStorage so the sidebar/header reflects the change
+      const storage = getAuthStorage();
+      try {
+        const cached = JSON.parse(storage.getItem('adminUser') || '{}');
+        storage.setItem(
+          'adminUser',
+          JSON.stringify({ ...cached, ...payload })
+        );
+      } catch {
+        /* ignore */
       }
+
+      toast.success('Profile updated successfully.');
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to update profile.'
-      );
+      console.error('Save profile error:', error);
+      toast.error('Unable to update profile.');
     } finally {
       setSavingProfile(false);
     }
   };
 
   // ============================================================
-  // HANDLERS — University
+  // HANDLERS — Password
   // ============================================================
+
+  const handleChangePassword = async (data) => {
+    if (!adminId) {
+      toast.error('Admin record not found.');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      // 1) Read the latest admin record
+      const res = await api.get(`/adminCredentials/${adminId}`);
+      const current = res.data;
+
+      // 2) Verify current password
+      if (!current || current.password !== data.current_password) {
+        toast.error('Current password is incorrect.');
+        setChangingPassword(false);
+        return;
+      }
+
+      // 3) Reject reusing the same password
+      if (data.current_password === data.new_password) {
+        toast.error('New password must be different from the current one.');
+        setChangingPassword(false);
+        return;
+      }
+
+      // 4) Persist the new password
+      const updates = {
+        password: data.new_password,
+        passwordUpdatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await api.patch(`/adminCredentials/${adminId}`, updates);
+      } catch (patchErr) {
+        if (patchErr.response?.status === 404) throw patchErr;
+        // PUT fallback
+        await api.put(`/adminCredentials/${adminId}`, {
+          ...current,
+          ...updates,
+        });
+      }
+
+      // 5) Sync cached session
+      const storage = getAuthStorage();
+      try {
+        const cached = JSON.parse(storage.getItem('adminUser') || '{}');
+        storage.setItem(
+          'adminUser',
+          JSON.stringify({ ...cached, ...updates })
+        );
+      } catch {
+        /* ignore */
+      }
+
+      toast.success('Password changed successfully.');
+      passwordForm.reset();
+      setShowCurrentPwd(false);
+      setShowNewPwd(false);
+      setShowConfirmPwd(false);
+    } catch (error) {
+      console.error('Change password error:', error);
+      if (!error.response) {
+        toast.error('Cannot reach JSON Server.');
+      } else {
+        toast.error('Unable to change password. Please try again.');
+      }
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  // ============================================================
+  // HANDLERS — University + Settings
+  // ============================================================
+
+  const upsertSettingsDoc = async (partial) => {
+    const currentAdmin = getCurrentAdmin();
+    const now = new Date().toISOString();
+
+    if (settingsId) {
+      await api.patch(`/settings/${settingsId}`, {
+        ...partial,
+        updatedAt: now,
+      });
+    } else {
+      const created = await api.post('/settings', {
+        adminId: currentAdmin?.id || 'admin-1',
+        ...partial,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (created.data?.id) setSettingsId(created.data.id);
+    }
+  };
 
   const handleSaveUniversity = async (data) => {
     setSavingUniversity(true);
     try {
-      const res = await api.patch('/api/admin/settings/university', data);
-      if (res.data.success) {
-        toast.success('University information updated successfully.');
-        setUniversity(res.data.university || { ...university, ...data });
-        setEditingUniversity(false);
-      } else {
-        toast.error(
-          res.data.message || 'Unable to update university information.'
-        );
-      }
+      await upsertSettingsDoc({ university: data });
+      setUniversity(data);
+      setEditingUniversity(false);
+      toast.success('University information updated successfully.');
     } catch (error) {
-      toast.error(
-        error.response?.data?.message ||
-          'Unable to update university information.'
-      );
+      console.error('Save university error:', error);
+      toast.error('Unable to update university information.');
     } finally {
       setSavingUniversity(false);
     }
@@ -828,28 +1014,27 @@ const Settings = () => {
   const handleSaveAY = async (data) => {
     setSavingAY(true);
     try {
-      const url = editingAY
-        ? `/api/admin/academic-years/${editingAY.id}`
-        : '/api/admin/academic-years';
-      const res = editingAY
-        ? await api.patch(url, data)
-        : await api.post(url, data);
-      if (res.data.success) {
-        toast.success(
-          editingAY
-            ? 'Academic year updated successfully.'
-            : 'Academic year created successfully.'
-        );
-        setAyModalOpen(false);
-        setEditingAY(null);
-        fetchAllSettings(true);
+      const now = new Date().toISOString();
+      if (editingAY) {
+        await api.patch(`/academicYears/${editingAY.id}`, {
+          ...data,
+          updatedAt: now,
+        });
+        toast.success('Academic year updated successfully.');
       } else {
-        toast.error(res.data.message || 'Unable to save academic year.');
+        await api.post('/academicYears', {
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        });
+        toast.success('Academic year created successfully.');
       }
+      setAyModalOpen(false);
+      setEditingAY(null);
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save academic year.'
-      );
+      console.error('Save AY error:', error);
+      toast.error('Unable to save academic year.');
     } finally {
       setSavingAY(false);
     }
@@ -888,28 +1073,27 @@ const Settings = () => {
   const handleSaveSem = async (data) => {
     setSavingSem(true);
     try {
-      const url = editingSem
-        ? `/api/admin/semesters/${editingSem.id}`
-        : '/api/admin/semesters';
-      const res = editingSem
-        ? await api.patch(url, data)
-        : await api.post(url, data);
-      if (res.data.success) {
-        toast.success(
-          editingSem
-            ? 'Semester updated successfully.'
-            : 'Semester created successfully.'
-        );
-        setSemModalOpen(false);
-        setEditingSem(null);
-        fetchAllSettings(true);
+      const now = new Date().toISOString();
+      if (editingSem) {
+        await api.patch(`/semesters/${editingSem.id}`, {
+          ...data,
+          updatedAt: now,
+        });
+        toast.success('Semester updated successfully.');
       } else {
-        toast.error(res.data.message || 'Unable to save semester.');
+        await api.post('/semesters', {
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        });
+        toast.success('Semester created successfully.');
       }
+      setSemModalOpen(false);
+      setEditingSem(null);
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save semester.'
-      );
+      console.error('Save semester error:', error);
+      toast.error('Unable to save semester.');
     } finally {
       setSavingSem(false);
     }
@@ -942,28 +1126,27 @@ const Settings = () => {
   const handleSaveDept = async (data) => {
     setSavingDept(true);
     try {
-      const url = editingDept
-        ? `/api/admin/departments/${editingDept.id}`
-        : '/api/admin/departments';
-      const res = editingDept
-        ? await api.patch(url, data)
-        : await api.post(url, data);
-      if (res.data.success) {
-        toast.success(
-          editingDept
-            ? 'Department updated successfully.'
-            : 'Department created successfully.'
-        );
-        setDeptModalOpen(false);
-        setEditingDept(null);
-        fetchAllSettings(true);
+      const now = new Date().toISOString();
+      if (editingDept) {
+        await api.patch(`/departments/${editingDept.id}`, {
+          ...data,
+          updatedAt: now,
+        });
+        toast.success('Department updated successfully.');
       } else {
-        toast.error(res.data.message || 'Unable to save department.');
+        await api.post('/departments', {
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        });
+        toast.success('Department created successfully.');
       }
+      setDeptModalOpen(false);
+      setEditingDept(null);
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save department.'
-      );
+      console.error('Save department error:', error);
+      toast.error('Unable to save department.');
     } finally {
       setSavingDept(false);
     }
@@ -1002,28 +1185,27 @@ const Settings = () => {
   const handleSaveProg = async (data) => {
     setSavingProg(true);
     try {
-      const url = editingProg
-        ? `/api/admin/programs/${editingProg.id}`
-        : '/api/admin/programs';
-      const res = editingProg
-        ? await api.patch(url, data)
-        : await api.post(url, data);
-      if (res.data.success) {
-        toast.success(
-          editingProg
-            ? 'Program updated successfully.'
-            : 'Program created successfully.'
-        );
-        setProgModalOpen(false);
-        setEditingProg(null);
-        fetchAllSettings(true);
+      const now = new Date().toISOString();
+      if (editingProg) {
+        await api.patch(`/programs/${editingProg.id}`, {
+          ...data,
+          updatedAt: now,
+        });
+        toast.success('Program updated successfully.');
       } else {
-        toast.error(res.data.message || 'Unable to save program.');
+        await api.post('/programs', {
+          ...data,
+          createdAt: now,
+          updatedAt: now,
+        });
+        toast.success('Program created successfully.');
       }
+      setProgModalOpen(false);
+      setEditingProg(null);
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save program.'
-      );
+      console.error('Save program error:', error);
+      toast.error('Unable to save program.');
     } finally {
       setSavingProg(false);
     }
@@ -1036,22 +1218,11 @@ const Settings = () => {
   const handleSaveRegistration = async () => {
     setSavingReg(true);
     try {
-      const res = await api.patch(
-        '/api/admin/settings/registration',
-        registrationSettings
-      );
-      if (res.data.success) {
-        toast.success('Registration settings saved successfully.');
-      } else {
-        toast.error(
-          res.data.message || 'Unable to save registration settings.'
-        );
-      }
+      await upsertSettingsDoc({ registration: registrationSettings });
+      toast.success('Registration settings saved successfully.');
     } catch (error) {
-      toast.error(
-        error.response?.data?.message ||
-          'Unable to save registration settings.'
-      );
+      console.error('Save registration settings error:', error);
+      toast.error('Unable to save registration settings.');
     } finally {
       setSavingReg(false);
     }
@@ -1064,21 +1235,11 @@ const Settings = () => {
   const handleSaveResultSettings = async () => {
     setSavingResults(true);
     try {
-      const res = await api.patch(
-        '/api/admin/settings/results',
-        resultSettings
-      );
-      if (res.data.success) {
-        toast.success('Result settings saved successfully.');
-      } else {
-        toast.error(
-          res.data.message || 'Unable to save result settings.'
-        );
-      }
+      await upsertSettingsDoc({ results: resultSettings });
+      toast.success('Result settings saved successfully.');
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save result settings.'
-      );
+      console.error('Save result settings error:', error);
+      toast.error('Unable to save result settings.');
     } finally {
       setSavingResults(false);
     }
@@ -1105,28 +1266,28 @@ const Settings = () => {
   const handleSaveAnn = async (data) => {
     setSavingAnn(true);
     try {
-      const url = editingAnn
-        ? `/api/admin/announcements/${editingAnn.id}`
-        : '/api/admin/announcements';
-      const res = editingAnn
-        ? await api.patch(url, data)
-        : await api.post(url, data);
-      if (res.data.success) {
-        toast.success(
-          editingAnn
-            ? 'Announcement updated successfully.'
-            : 'Announcement created successfully.'
-        );
-        setAnnModalOpen(false);
-        setEditingAnn(null);
-        fetchAllSettings(true);
+      const now = new Date().toISOString();
+      if (editingAnn) {
+        await api.patch(`/announcements/${editingAnn.id}`, {
+          ...data,
+          updatedAt: now,
+        });
+        toast.success('Announcement updated successfully.');
       } else {
-        toast.error(res.data.message || 'Unable to save announcement.');
+        await api.post('/announcements', {
+          ...data,
+          status: 'Draft',
+          createdAt: now,
+          updatedAt: now,
+        });
+        toast.success('Announcement created successfully.');
       }
+      setAnnModalOpen(false);
+      setEditingAnn(null);
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to save announcement.'
-      );
+      console.error('Save announcement error:', error);
+      toast.error('Unable to save announcement.');
     } finally {
       setSavingAnn(false);
     }
@@ -1134,42 +1295,35 @@ const Settings = () => {
 
   const handlePublishAnn = async (ann) => {
     try {
-      const res = await api.patch(
-        `/api/admin/announcements/${ann.id}/publish`
-      );
-      if (res.data.success) {
-        toast.success('Announcement published successfully.');
-        fetchAllSettings(true);
-      } else {
-        toast.error(res.data.message || 'Unable to publish announcement.');
-      }
+      await api.patch(`/announcements/${ann.id}`, {
+        status: 'Published',
+        publishedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      toast.success('Announcement published successfully.');
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to publish announcement.'
-      );
+      console.error('Publish error:', error);
+      toast.error('Unable to publish announcement.');
     }
   };
 
   const handleArchiveAnn = async (ann) => {
     try {
-      const res = await api.patch(`/api/admin/announcements/${ann.id}`, {
+      await api.patch(`/announcements/${ann.id}`, {
         status: 'Archived',
+        updatedAt: new Date().toISOString(),
       });
-      if (res.data.success) {
-        toast.success('Announcement archived successfully.');
-        fetchAllSettings(true);
-      } else {
-        toast.error(res.data.message || 'Unable to archive announcement.');
-      }
+      toast.success('Announcement archived successfully.');
+      await fetchAllSettings(true);
     } catch (error) {
-      toast.error(
-        error.response?.data?.message || 'Unable to archive announcement.'
-      );
+      console.error('Archive error:', error);
+      toast.error('Unable to archive announcement.');
     }
   };
 
   // ============================================================
-  // RENDER — Loading
+  // RENDER — LOADING
   // ============================================================
 
   if (loading) {
@@ -1188,7 +1342,7 @@ const Settings = () => {
   }
 
   // ============================================================
-  // RENDER — Main
+  // RENDER — MAIN
   // ============================================================
 
   return (
@@ -1226,8 +1380,8 @@ const Settings = () => {
                 System Settings
               </h1>
               <p className="text-sm text-gray-500 mt-1 ml-11">
-                Manage SkillNest LMS configuration and university academic
-                settings.
+                Manage SkillNest LMS configuration, your admin account, and
+                university academic settings.
               </p>
             </div>
             <div className="ml-11 sm:ml-0">
@@ -1386,7 +1540,89 @@ const Settings = () => {
         </SectionCard>
 
         {/* ============================================================
-            2. UNIVERSITY INFORMATION
+            1b. CHANGE PASSWORD
+            ============================================================ */}
+        <SectionCard
+          icon={Lock}
+          title="Change Password"
+          subtitle="Update your administrator password. Your new password is saved securely."
+        >
+          <form
+            onSubmit={passwordForm.handleSubmit(handleChangePassword)}
+            className="space-y-4"
+          >
+            <PasswordField
+              label="Current Password"
+              name="current_password"
+              register={passwordForm.register}
+              errors={passwordForm.formState.errors}
+              show={showCurrentPwd}
+              onToggle={() => setShowCurrentPwd((v) => !v)}
+              placeholder="Enter your current password"
+            />
+            <PasswordField
+              label="New Password"
+              name="new_password"
+              register={passwordForm.register}
+              errors={passwordForm.formState.errors}
+              show={showNewPwd}
+              onToggle={() => setShowNewPwd((v) => !v)}
+              placeholder="Enter a new password"
+            />
+            <PasswordField
+              label="Confirm New Password"
+              name="confirm_password"
+              register={passwordForm.register}
+              errors={passwordForm.formState.errors}
+              show={showConfirmPwd}
+              onToggle={() => setShowConfirmPwd((v) => !v)}
+              placeholder="Re-enter your new password"
+            />
+
+            <div
+              className="rounded-lg p-3 border"
+              style={{
+                backgroundColor: BRAND.primarySoft,
+                borderColor: BRAND.primaryBorder,
+              }}
+            >
+              <p
+                className="text-xs font-semibold mb-1.5"
+                style={{ color: BRAND.primaryDark }}
+              >
+                Password must contain:
+              </p>
+              <ul className="text-xs space-y-0.5" style={{ color: BRAND.accent }}>
+                <li>• At least 8 characters</li>
+                <li>• At least one uppercase letter</li>
+                <li>• At least one lowercase letter</li>
+                <li>• At least one number</li>
+              </ul>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="submit"
+                disabled={changingPassword}
+                className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white rounded-lg transition-colors shadow-sm disabled:opacity-60"
+                style={{ backgroundColor: BRAND.primary }}
+              >
+                {changingPassword ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Updating...
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-4 h-4" /> Update Password
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        </SectionCard>
+
+        {/* ============================================================
+            2. UNIVERSITY
             ============================================================ */}
         <SectionCard
           icon={Building2}
@@ -1399,7 +1635,8 @@ const Settings = () => {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors"
                 style={{ color: BRAND.primary, backgroundColor: '#ffffff' }}
               >
-                <Edit className="w-3.5 h-3.5" /> Edit
+                <Edit className="w-3.5 h-3.5" />
+                Edit
               </button>
             ) : null
           }
@@ -1943,14 +2180,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.target.style.borderColor = BRAND.primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = '#d1d5db';
-                    e.target.style.boxShadow = 'none';
-                  }}
                 />
               </div>
               <div>
@@ -1967,14 +2196,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.target.style.borderColor = BRAND.primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = '#d1d5db';
-                    e.target.style.boxShadow = 'none';
-                  }}
                 />
               </div>
               <div>
@@ -1991,14 +2212,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.target.style.borderColor = BRAND.primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = '#d1d5db';
-                    e.target.style.boxShadow = 'none';
-                  }}
                 />
               </div>
               <div>
@@ -2015,14 +2228,6 @@ const Settings = () => {
                     }))
                   }
                   className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                  onFocus={(e) => {
-                    e.target.style.borderColor = BRAND.primary;
-                    e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                  }}
-                  onBlur={(e) => {
-                    e.target.style.borderColor = '#d1d5db';
-                    e.target.style.boxShadow = 'none';
-                  }}
                 />
               </div>
             </div>
@@ -2092,14 +2297,6 @@ const Settings = () => {
                   }))
                 }
                 className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg outline-none"
-                onFocus={(e) => {
-                  e.target.style.borderColor = BRAND.primary;
-                  e.target.style.boxShadow = `0 0 0 3px ${BRAND.primarySoft}`;
-                }}
-                onBlur={(e) => {
-                  e.target.style.borderColor = '#d1d5db';
-                  e.target.style.boxShadow = 'none';
-                }}
               >
                 <option value="Published Only">Published Only</option>
                 <option value="Published + Provisional">
@@ -2181,7 +2378,7 @@ const Settings = () => {
                         {ann.title}
                       </h4>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Created: {formatDate(ann.created_at)}
+                        Created: {formatDate(ann.createdAt || ann.created_at)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
@@ -2259,7 +2456,7 @@ const Settings = () => {
               {
                 icon: Shield,
                 label: 'Admin Authentication',
-                value: 'Two-factor authentication available',
+                value: 'Email + password (single-admin mode)',
               },
               {
                 icon: AlertTriangle,
@@ -2302,8 +2499,9 @@ const Settings = () => {
                 style={{ color: BRAND.primary }}
               />
               <p className="text-xs" style={{ color: BRAND.primaryDark }}>
-                Security settings are managed at the system level. Contact your
-                infrastructure team to modify authentication policies.
+                Use the Change Password section above to update your admin
+                credentials. All changes are persisted to{' '}
+                <code className="font-mono">db.json</code>.
               </p>
             </div>
           </div>

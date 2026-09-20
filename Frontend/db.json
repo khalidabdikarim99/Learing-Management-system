@@ -118,9 +118,52 @@
       "createdAt": "2026-09-18T18:47:33.571Z",
       "updatedAt": "2026-09-18T18:47:33.571Z",
       "id": "ii93Tm-y8tQ"
+    },
+    {
+      "studentId": "S11",
+      "studentName": "khalid abdi",
+      "program": "Information Science",
+      "department": "COMPUTER DEPARTMENT",
+      "unitId": "wS8RMpHy4iY",
+      "unitCode": "INS 213",
+      "unitName": "INTRODUCTION OF COMPUTER",
+      "creditHours": 3,
+      "lecturer": "DR MBUGUA",
+      "academicYear": "2023/2024",
+      "semester": "Semester 1",
+      "status": "Pending",
+      "registrationDate": "2026-09-20T07:59:22.122Z",
+      "createdAt": "2026-09-20T07:59:22.122Z",
+      "updatedAt": "2026-09-20T07:59:22.122Z",
+      "id": "Kcu-L3IYsiI"
     }
   ],
-  "results": [],
+  "results": [
+    {
+      "studentId": "iyPXo4-af58",
+      "studentName": "khalid abdi",
+      "admissionNumber": "s110/131/23",
+      "program": "Information Science",
+      "department": "Computer Science",
+      "unitId": "wS8RMpHy4iY",
+      "unitCode": "INS 213",
+      "unitName": "INTRODUCTION OF COMPUTER",
+      "creditHours": 3,
+      "lecturer": "DR MBUGUA",
+      "academicYear": "2023/2024",
+      "semester": "Semester 1",
+      "catMarks": 25,
+      "examMarks": 45,
+      "totalMarks": 70,
+      "grade": "A",
+      "gradePoint": 4,
+      "status": "Published",
+      "updatedAt": "2026-09-20T07:40:03.858Z",
+      "createdAt": "2026-09-20T07:36:44.500Z",
+      "id": "AF4-VXekoT4",
+      "publishedAt": "2026-09-20T07:40:03.858Z"
+    }
+  ],
   "gpaHistory": [],
   "profiles": [
     {
@@ -164,6 +207,18 @@
   "notifications": [],
   "registrationHistory": [],
   "announcements": [],
+   "adminCredentials":[
+     {
+      "id": "admin-1",
+      "email": "skillnestadmin@gmail.com",
+      "password": "skullnest12345",
+      "first_name": "SkillNest",
+      "last_name": "Administrator",
+      "phone": "+254700000000",
+      "role": "Administrator",
+      "status": "Active"
+    }
+   ],
   "activity": [],
   "gpaTrend": [],
   "users": [],
